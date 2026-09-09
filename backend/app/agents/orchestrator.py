@@ -35,6 +35,7 @@ from app.services.audit_service import AuditService
 from app.services.base import NotVerifiedError
 from app.services.escalation_service import EscalationService
 from app.services.medication_service import MedicationService
+from app.services.persistence_service import PersistenceService
 from app.services.refill_service import RefillService
 from app.services.safety_service import SafetyService
 from app.services.scheduling_service import SchedulingService
@@ -102,6 +103,7 @@ class Orchestrator:
         traces: TraceStore | None = None,
         ledger: UsageLedger | None = None,
         settings: Settings | None = None,
+        persistence: PersistenceService | None = None,
     ) -> None:
         self.safety = safety
         self.escalations = escalations
@@ -110,6 +112,7 @@ class Orchestrator:
         self.traces = traces or TraceStore()
         self.ledger = ledger
         self.settings = settings or get_settings()
+        self.persistence = persistence
 
         self.booking = ExistingPatientBookingWorkflow(
             verification, scheduling, escalations, self.audit
@@ -143,7 +146,7 @@ class Orchestrator:
                 message = evaluation.patient_message or FALLBACK_MESSAGE
                 # A refusal ends whatever was in progress; the human takes over.
                 session.active_workflow = None
-                return self._record(
+                return await self._record(
                     session,
                     turn_number,
                     utterance,
@@ -163,7 +166,7 @@ class Orchestrator:
                 )
 
             if turn_number > self.settings.max_conversation_turns:
-                return self._turn_limit_reached(
+                return await self._turn_limit_reached(
                     session, turn_number, utterance, evaluation, audit_mark, started, moment
                 )
 
@@ -179,7 +182,7 @@ class Orchestrator:
             workflow_ms = (time.perf_counter() - workflow_started) * 1000
 
             message = response.message if response else FALLBACK_MESSAGE
-            return self._record(
+            return await self._record(
                 session,
                 turn_number,
                 utterance,
@@ -346,7 +349,7 @@ class Orchestrator:
         return ExtractionContext(awaiting=awaiting, offers=offers)
 
     # -------------------------------------------------------------- record
-    def _record(
+    async def _record(
         self,
         session: SessionState,
         turn_number: int,
@@ -394,6 +397,12 @@ class Orchestrator:
             ),
         )
         self.traces.append(trace)
+
+        # A turn is the unit of work: everything it produced is written here,
+        # in one transaction, rather than each service awaiting its own write.
+        if self.persistence is not None:
+            await self.persistence.flush_turn(session, trace)
+
         logger.info(
             "turn_completed",
             turn=turn_number,
@@ -430,7 +439,7 @@ class Orchestrator:
             found["confirm"] = str(extracted.confirm)
         return found
 
-    def _turn_limit_reached(
+    async def _turn_limit_reached(
         self,
         session: SessionState,
         turn_number: int,
@@ -453,7 +462,7 @@ class Orchestrator:
             ai_action="Conversation handed over at the turn limit",
         )
         session.active_workflow = None
-        return self._record(
+        return await self._record(
             session,
             turn_number,
             utterance,

@@ -89,6 +89,19 @@ MAX_STT_MINUTES_PER_SESSION=10
 BUDGET_GUARD_OVERRIDE=false
 ```
 
+## Spend survives a restart
+
+The ledger is persisted to `provider_usage`, and the total is read back into memory at
+startup. Without that, the $20 ceiling would mean "spent since this process started",
+which is not a budget: a crash-and-restart loop could spend indefinitely while every
+individual run looked well within limits.
+
+Per-session caps deliberately ignore the carried-forward total — they are about the call
+in progress, not the project's history.
+
+`make budget` reads the persisted ledger, so it reports the same number the guard
+enforces.
+
 ## Guard behaviour
 
 The guard is consulted **before** any paid provider call.

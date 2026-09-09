@@ -146,3 +146,39 @@ class TestMetering:
         assert summary["status"] == "warn"
         assert summary["paid_calls_allowed"] is True
         assert summary["project_limit_usd"] == "20"
+
+
+class TestSpendSurvivesRestart:
+    """A ceiling that resets on restart is not a ceiling (Phase 11)."""
+
+    def test_a_baseline_counts_toward_the_project_total(self, ledger: UsageLedger) -> None:
+        ledger.set_baseline(Decimal("12.00"))
+        spend(ledger, "3.00")
+        assert ledger.project_total() == Decimal("15.00")
+
+    def test_carried_forward_spend_can_trip_the_warning(
+        self, ledger: UsageLedger, guard: BudgetGuard
+    ) -> None:
+        ledger.set_baseline(Decimal("15.50"))
+        decision = guard.check("openai")
+        assert decision.status == "warn"
+        assert decision.allowed is True
+
+    def test_carried_forward_spend_can_block(self, ledger: UsageLedger, guard: BudgetGuard) -> None:
+        """A fresh process with $20 already spent must not start spending again."""
+        ledger.set_baseline(Decimal("20.00"))
+        assert ledger.records == []  # nothing spent in *this* run
+        decision = guard.check("openai")
+        assert decision.allowed is False
+        assert decision.status == "blocked"
+
+    def test_session_totals_ignore_the_baseline(self, ledger: UsageLedger) -> None:
+        """Per-session caps are about this call, not the project's history."""
+        ledger.set_baseline(Decimal("19.00"))
+        spend(ledger, "0.25", session_id="s1")
+        assert ledger.session_total("s1") == Decimal("0.25")
+
+    def test_clearing_resets_the_baseline_too(self, ledger: UsageLedger) -> None:
+        ledger.set_baseline(Decimal("10.00"))
+        ledger.clear()
+        assert ledger.project_total() == Decimal("0")

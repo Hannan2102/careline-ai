@@ -64,9 +64,13 @@ class UsageLedger:
     what the budget guard depends on, so persistence is a swap behind it.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, baseline_usd: Decimal | None = None) -> None:
         self._records: list[ProviderUsageRecord] = []
         self._lock = threading.Lock()
+        # Spend from earlier runs, read back from ``provider_usage`` at startup.
+        # Without it the ceiling resets every restart, which would make the
+        # project budget unenforceable in exactly the situation it matters.
+        self._baseline = baseline_usd or Decimal("0")
 
     def record(
         self,
@@ -93,8 +97,18 @@ class UsageLedger:
         with self._lock:
             return list(self._records)
 
+    def set_baseline(self, amount: Decimal) -> None:
+        """Carry forward spend already recorded in the database."""
+        with self._lock:
+            self._baseline = amount
+
+    @property
+    def baseline(self) -> Decimal:
+        return self._baseline
+
     def project_total(self) -> Decimal:
-        return sum((r.estimated_cost for r in self.records), Decimal("0"))
+        """Everything spent on this project, across every run."""
+        return self._baseline + sum((r.estimated_cost for r in self.records), Decimal("0"))
 
     def session_total(self, session_id: str) -> Decimal:
         return sum(
@@ -117,6 +131,7 @@ class UsageLedger:
     def clear(self) -> None:
         with self._lock:
             self._records.clear()
+            self._baseline = Decimal("0")
 
 
 #: Process-wide ledger. Injected explicitly in tests.

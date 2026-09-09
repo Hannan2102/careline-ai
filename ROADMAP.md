@@ -176,14 +176,24 @@ Next.js: Overview, Calls, Agent Trace, Patients, Appointments, Escalations.
 
 ---
 
-### ⬜ Phase 11 — Usage tracking and budget controls
-`provider_usage` persistence, pricing, guard enforcement, dashboard surfacing.
+### ✅ Phase 11 — Persistence, usage tracking, and budget controls
+The full application schema — `session`, `turn`, `audit_event`, `escalation`,
+`refill_request`, `provider_usage` — plus the guard reading a spend total that survives
+a restart.
 
 **Acceptance**
-- Every provider call records units and estimated cost
-- Warn threshold surfaces a warning; max threshold blocks optional paid calls
-- Guard behaviour is unit-tested at both thresholds
-- Text/mock mode always remains available
+- [x] Every provider call records units and estimated cost, persisted to `provider_usage`
+- [x] Warn threshold surfaces a warning; max threshold blocks optional paid calls
+- [x] Guard behaviour is unit-tested at both thresholds, including a fresh process that
+      inherits $20 of prior spend and refuses to start spending again
+- [x] Text/mock mode always remains available
+- [x] Sessions, turns, audit events, escalations, and refill requests survive a restart
+- [x] `make budget` reports persisted spend rather than this process's memory
+- [x] A database failure degrades to in-memory rather than ending the conversation
+
+A turn is the unit of work: everything a turn produced is written in one transaction at
+the end of it. The tradeoff is stated in PROJECT_STATUS — a crash mid-turn loses that
+turn's rows, which a regulated deployment would not accept for audit.
 
 ---
 

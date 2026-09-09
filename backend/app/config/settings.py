@@ -55,6 +55,9 @@ class Settings(BaseSettings):
 
     # --- Persistence -----------------------------------------------------
     database_url: str = "sqlite+aiosqlite:///./careline.db"
+    #: Off in tests unless a database is explicitly provided; on by default so
+    #: the audit trail and usage ledger survive a restart in normal use.
+    persistence_enabled: bool = True
 
     # --- EHR -------------------------------------------------------------
     ehr_provider: EHRProviderName = EHRProviderName.MEMORY

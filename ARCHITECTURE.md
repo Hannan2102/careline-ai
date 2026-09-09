@@ -267,7 +267,14 @@ Two databases-worth of concerns, deliberately separated:
 - **FHIR storage** — owned by HAPI. Clinical + scheduling resources.
 - **Application schema** — owned by us: `session`, `turn`, `audit_event`, `escalation`,
   `refill_request`, `provider_usage`. Never contains a clinical assertion; references
-  patients by FHIR id only.
+  patients by FHIR id only. Async SQLAlchemy, PostgreSQL in Docker or SQLite without it.
+
+A **turn is the unit of work**: everything a turn produced — the session's state, its
+trace, audit events, escalations, refill requests, metered usage — is written in one
+transaction when the turn ends. The alternative, awaiting a write at each point of
+access, would push async plumbing through the safety layer and the verification service
+for no measurable benefit here. The cost is that a crash mid-turn loses that turn's rows,
+which is acceptable for a demo and would not be for a regulated audit trail.
 
 `MemoryFHIRProvider` implements the identical interface in-process so the whole system —
 and the whole test suite — runs with no Docker and no network. It is a development

@@ -10,23 +10,43 @@ not exposed. Staff-facing access control is noted as a gap in SAFETY.md.
 
 from __future__ import annotations
 
-from functools import lru_cache
-
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.factory import Runtime, build_runtime
 from app.agents.state import SessionChannel, SessionSnapshot
 from app.agents.trace import TurnTrace
+from app.db.engine import Database
 from app.services.base import NotFoundError
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
 
 
-@lru_cache(maxsize=1)
+#: Process-wide runtime, so sessions survive between requests. A second
+#: worker would not see them, which is fine for local development and is
+#: recorded as a gap in PROJECT_STATUS.
+_runtime: Runtime | None = None
+
+
+def configure_runtime(database: Database | None = None) -> Runtime:
+    """Install the runtime, optionally with persistence. Called at startup."""
+    global _runtime
+    _runtime = build_runtime(database=database)
+    return _runtime
+
+
 def get_runtime() -> Runtime:
-    """Process-wide runtime, so sessions survive between requests."""
-    return build_runtime()
+    """FastAPI dependency.
+
+    Takes no parameters on purpose. FastAPI derives request fields from a
+    dependency's signature, so a `Database` argument here would send Pydantic
+    off building a schema for SQLAlchemy's engine internals -- which does not
+    terminate in any useful time.
+    """
+    global _runtime
+    if _runtime is None:
+        _runtime = build_runtime()
+    return _runtime
 
 
 class StartSessionRequest(BaseModel):

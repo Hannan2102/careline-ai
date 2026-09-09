@@ -4,7 +4,7 @@
 
 ## Current phase
 
-**Phases 0–9 complete.** The agent works end to end in text, at $0. Next: Phase 10 (admin dashboard) or Phase 11 (persistence).
+**Phases 0–9 and 11 complete.** The agent works end to end in text, at $0, and what it does now survives a restart. Next: Phase 10 (admin dashboard).
 
 ## Completed
 
@@ -99,6 +99,15 @@
 - `POST /api/agent/sessions/{id}/turns` — the single entry point the CLI and, later,
   the voice agent both call
 
+**Phase 11 — Persistence, usage tracking, and budget controls** ✅
+- Six-table application schema; async SQLAlchemy over PostgreSQL, or SQLite without
+  Docker — the same two-tier arrangement as the EHR layer, for the same reason
+- A turn is the unit of work: one transaction at the end of each turn
+- Spend is carried forward at startup, so the $20 ceiling means *this project* and
+  not *this boot* — a fresh process inheriting $20 refuses to spend, and that is tested
+- `make budget` reads the persisted ledger
+- A database failure logs and degrades to in-memory: the caller is on the phone
+
 ## What actually works — and how I know
 
 | Capability | Verified by |
@@ -156,6 +165,10 @@
 | "Tuesday please" resolves against the offered times | `test_a_weekday_resolves_against_the_offered_times` |
 | Traces carry no names or dates of birth | `test_the_trace_does_not_accumulate_identifiers` |
 | An unrecognised request offers the menu, never guesses | `test_an_unrecognised_request_offers_the_menu_rather_than_guessing` |
+| Turns, audit, escalations, refills, usage all persist | `tests/integration/test_persistence.py` |
+| Persisted turns and audit rows carry no identifiers | `test_persisted_turns_carry_no_identifiers` |
+| A fresh process with $20 already spent refuses to spend | `test_carried_forward_spend_can_block` |
+| A database failure does not end the conversation | `test_a_persistence_failure_does_not_break_the_conversation` |
 | Patient search: exact, unknown, ambiguous, wrong DOB | `tests/integration/test_memory_ehr_provider.py::TestPatientSearch` |
 | Booking with type-driven duration and slot consumption | `TestBooking` |
 | Double-booking refused; 5 concurrent bookings → exactly 1 winner | `test_concurrent_booking_of_one_slot_has_exactly_one_winner` |
@@ -198,10 +211,11 @@ Try it: `python scripts/text_chat.py --script demo1 --trace`
 3. **Ownership is checked against *booked* appointments only.** Cancelling an already
    cancelled appointment reports "not owned" rather than "already cancelled". Correct and
    safe, but the workflow will want the clearer message in Phase 5.
-4. **Sessions, escalations, and audit events are in-process.** They vanish on restart
-   and are not visible across processes. Phase 11 persists all three — and an audit trail
-   that does not survive a restart is not really an audit trail, which is why that phase
-   matters more than its position in the list suggests.
+4. **Audit events are flushed at the end of a turn, not at the point of access.** A
+   crash mid-turn loses that turn's rows. This was a deliberate trade: writing each event
+   synchronously would push async plumbing through the safety layer and verification
+   service for no benefit the demo can measure. A regulated deployment would not accept
+   it, and the fix is a synchronous audit write at the point of access.
 5. **Name + DOB remains weak authentication**, as SAFETY.md states. The second factor is
    requested only on ambiguity, not always — matching common clinic practice, not good
    security. A real deployment needs more.
@@ -215,8 +229,12 @@ Try it: `python scripts/text_chat.py --script demo1 --trace`
    the honest position is that this needs clinical review, adversarial testing, and real
    transcripts before anyone would trust it.
 8. **Sessions live in one process.** The API's runtime is a module-level singleton, so a
-   second worker would not see the first's sessions. Fine for local development; Phase 11
-   fixes it properly.
+   second worker would not see the first's live sessions — persisted rows are shared, the
+   in-flight conversation state is not. Fine for local development; a real deployment
+   needs session state in the database or a shared store.
+9. **No migrations.** Schema is created with `create_all`, because every environment
+   builds it from scratch and there is nothing to migrate yet. Alembic belongs here the
+   moment a deployed database must survive a schema change.
 3. **The 15-minute slot grid rounds durations up.** A 20-minute visit occupies 30 minutes of
    grid. Documented in `docs/fhir-data-model.md`; a real template model would fix it.
 4. **No application database yet.** `session`, `turn`, `audit_event`, `escalation`,
