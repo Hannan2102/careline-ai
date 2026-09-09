@@ -153,8 +153,9 @@
 ## Last test results
 
 ```
-554 passed in 145.5s  (full suite, both EHR providers)
-397 passed in   2.0s  (offline suite: -m "not integration")
+554 passed in 59.0s   (full suite, both EHR providers)
+397 passed in  2.0s   (offline suite: -m "not integration")
+157 passed in 40.6s   (HAPI integration suite only)
 ```
 
 - The HAPI suite runs against a live FHIR 4.0.1 server via `make test-int`; it skips
@@ -165,8 +166,10 @@
 
 ## Known problems and gaps
 
-1. **Integration tests reset HAPI per test.** 64 HAPI tests take ~40 s. Acceptable now;
-   a session-scoped baseline with per-test cleanup would scale better.
+1. **Integration tests reset HAPI per test**, but incrementally: the reset frees the
+   slots a test actually dirtied rather than rewriting the ~960-slot grid, and falls back
+   to a full seed only when the dataset is absent or covers the wrong dates. That took the
+   full suite from 145 s to 59 s.
 2. **The offline suite slows dramatically under memory pressure.** With HAPI's JVM
    resident on a 8 GB machine it went from 1.0 s to 117 s while the system swapped. Worth
    knowing before blaming the tests; `make down` when not using the FHIR server.

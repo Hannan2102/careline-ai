@@ -159,6 +159,7 @@ async def reset_fhir_server(
     """
     # Appointments first: a Patient cannot be removed while referenced.
     await client.delete_matching("Appointment", {"status": "booked,cancelled,fulfilled,noshow"})
+
     # Then patients registered at runtime, so a previous run's "new patient"
     # does not linger and turn a later lookup into a duplicate match. Selected
     # by id prefix rather than by identifier, so records written before the
@@ -166,7 +167,37 @@ async def reset_fhir_server(
     for resource in await client.search("Patient", {"_count": "500"}):
         if is_runtime_patient(str(resource["id"])):
             await client.delete("Patient", str(resource["id"]))
+
+    # Re-seeding rewrites roughly a thousand Slot resources, which is wasteful
+    # when a test dirtied three of them. Free the busy ones instead, and fall
+    # back to a full seed only when the dataset is absent or covers the wrong
+    # dates.
+    if await _dataset_is_current(client, today):
+        busy = await client.search("Slot", {"status": "busy", "_count": "1000"})
+        for slot in busy:
+            slot["status"] = "free"
+            await client.update(slot)
+        booked = await _book_demo_appointment(LocalFHIRProvider(client), today)
+        # Counts only, so the summary type stays uniform with a full seed.
+        return {
+            "Slot_freed": len(busy),
+            "_demo_appointments_booked": booked,
+            "_full_seed": 0,
+        }
+
     return await seed_fhir_server(client, days_ahead=days_ahead, today=today)
+
+
+async def _dataset_is_current(client: FhirClient, today: date | None) -> bool:
+    """Whether the server already holds this dataset for these dates.
+
+    Probes the curated patient and the slot the demo appointment needs: if both
+    are present, the grid was generated for the same window.
+    """
+    if await client.try_read("Patient", "demo-john-smith") is None:
+        return False
+    probe = _demo_appointment_slot_id(today)
+    return probe is not None and await client.try_read("Slot", probe) is not None
 
 
 def dataset_report(days_ahead: int = DEFAULT_DAYS_AHEAD, today: date | None = None) -> str:
