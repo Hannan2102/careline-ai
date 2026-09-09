@@ -126,6 +126,12 @@ class ExistingPatientBookingWorkflow:
         state = BookingState(memory.get("state", BookingState.COLLECTING_IDENTITY.value))
         moment = now or datetime.now(UTC)
 
+        # Callers volunteer things before they are asked -- "I'd like a diabetes
+        # follow-up with Dr. Patel" arrives while we are still taking their name.
+        # Absorb it now, or the workflow asks again a turn later and sounds like
+        # it was not listening.
+        self._absorb(memory, turn)
+
         try:
             match state:
                 case BookingState.COLLECTING_IDENTITY:
@@ -190,8 +196,8 @@ class ExistingPatientBookingWorkflow:
         self, session: SessionState, turn: BookingInput, now: datetime
     ) -> WorkflowResponse:
         """Verified. Use a reason already given, or ask for one."""
-        if turn.reason:
-            return await self._handle_reason(session, turn, now)
+        if self._memory(session).get("appointment_type") is not None:
+            return await self._search_and_offer(session, turn, now)
         return self._awaiting(
             session,
             BookingState.COLLECTING_REASON,
@@ -202,27 +208,28 @@ class ExistingPatientBookingWorkflow:
     async def _handle_reason(
         self, session: SessionState, turn: BookingInput, now: datetime
     ) -> WorkflowResponse:
-        memory = self._memory(session)
-
-        if turn.reason:
-            classification = classify_reason(turn.reason)
-            memory.set("reason", turn.reason)
-            memory.set("appointment_type", classification.appointment_type.value)
-            memory.set("type_was_inferred", classification.is_fallback)
-        elif memory.get("appointment_type") is None:
+        if self._memory(session).get("appointment_type") is None:
             return self._awaiting(
                 session,
                 BookingState.COLLECTING_REASON,
                 "What would you like to be seen about?",
                 AwaitedInput.REASON,
             )
+        return await self._search_and_offer(session, turn, now)
+
+    @staticmethod
+    def _absorb(memory: WorkflowMemory, turn: BookingInput) -> None:
+        """Record details supplied ahead of the question that asks for them."""
+        if turn.reason and memory.get("appointment_type") is None:
+            classification = classify_reason(turn.reason)
+            memory.set("reason", turn.reason)
+            memory.set("appointment_type", classification.appointment_type.value)
+            memory.set("type_was_inferred", classification.is_fallback)
 
         if turn.practitioner_name:
             practitioner = find_practitioner_by_name(turn.practitioner_name)
             memory.set("practitioner_ref", practitioner.reference if practitioner else None)
             memory.set("practitioner_unmatched", practitioner is None)
-
-        return await self._search_and_offer(session, turn, now)
 
     async def _search_and_offer(
         self, session: SessionState, turn: BookingInput, now: datetime

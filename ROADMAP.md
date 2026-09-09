@@ -146,13 +146,23 @@ layer exists before there is an agent to constrain.
 
 ---
 
-### ⬜ Phase 9 — Text agent interface
-CLI + dev chat endpoint over the full runtime.
+### ✅ Phase 9 — Text agent interface
+Orchestrator, CLI, and dev chat endpoint over the full runtime.
 
 **Acceptance**
-- All Phase 3–8 workflows completable in text with a mock LLM (deterministic, $0)
-- Same workflow objects as voice; no parallel implementation
-- Transcript, intent, tool calls, and safety decisions recorded per turn
+- [x] All Phase 3–8 workflows completable in text, deterministically and at $0
+- [x] Safety runs first and unconditionally: workflows are reachable only from the ALLOW
+      branch, so there is no path from an utterance to a record that skips it
+- [x] Same workflow objects as voice; voice adds STT before `handle_turn` and TTS after
+- [x] Transcript, intent, entities, workflow, safety decision, record operations,
+      per-stage latency, and estimated cost recorded per turn
+- [x] Six DEMO.md scenarios run as executable tests
+- [x] The turn limit hands over to a human rather than looping (also a cost ceiling)
+
+The extraction seam is deterministic for now: `RuleBasedExtractor` implements the
+`TurnExtractor` protocol, and Phase 12 adds an LLM implementation of the same protocol.
+Safety runs before extraction either way, so a missed extraction can only ever produce
+"I didn't understand" — never an unsafe action.
 
 ---
 

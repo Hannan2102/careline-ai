@@ -4,7 +4,7 @@
 
 ## Current phase
 
-**Phases 0–8 complete.** Next: Phase 9 (text agent interface) — the orchestrator that makes safety-before-dispatch structural rather than compositional.
+**Phases 0–9 complete.** The agent works end to end in text, at $0. Next: Phase 10 (admin dashboard) or Phase 11 (persistence).
 
 ## Completed
 
@@ -86,6 +86,19 @@
   and divergence in a security-relevant path is how guarantees quietly leak. One
   implementation, with a test asserting all four workflows reply identically.
 
+**Phase 9 — Text agent interface** ✅
+- `Orchestrator` — classify safety, extract, route, execute, render, record. Safety
+  is first and unconditional; workflows hang off the ALLOW branch only
+- `RuleBasedExtractor` behind a `TurnExtractor` protocol — deterministic and free;
+  Phase 12 adds an LLM implementation of the same seam
+- `TurnTrace` — transcript, intent, entities, workflow, safety decision, record
+  operations, per-stage latency, estimated cost. Identifiers are redacted: a debug
+  record should not become a second place patient data accumulates
+- `ClinicFaqWorkflow` — structured lookup, no RAG
+- `scripts/text_chat.py` with `--trace` and six replayable demo scripts
+- `POST /api/agent/sessions/{id}/turns` — the single entry point the CLI and, later,
+  the voice agent both call
+
 ## What actually works — and how I know
 
 | Capability | Verified by |
@@ -135,6 +148,14 @@
 | A refill leaves the EHR provably unchanged | `test_a_refill_never_becomes_a_prescription` |
 | `RefillService` has no method that could authorise | `test_the_refill_service_has_no_way_to_authorise` |
 | All four workflows reprompt for identity identically | `test_every_workflow_reprompts_identically` |
+| Six DEMO.md scenarios run end to end in text | `TestDemoScenarios` |
+| A refusal performs zero record operations | `test_safety_runs_before_any_workflow` |
+| A refusal mid-booking leaves the EHR untouched | `test_a_refusal_mid_booking_stops_the_workflow` |
+| Prompt injection never reaches a workflow | `test_injection_does_not_reach_a_workflow` |
+| "Yes" mid-booking continues, never restarts | `test_an_in_progress_workflow_keeps_the_turn` |
+| "Tuesday please" resolves against the offered times | `test_a_weekday_resolves_against_the_offered_times` |
+| Traces carry no names or dates of birth | `test_the_trace_does_not_accumulate_identifiers` |
+| An unrecognised request offers the menu, never guesses | `test_an_unrecognised_request_offers_the_menu_rather_than_guessing` |
 | Patient search: exact, unknown, ambiguous, wrong DOB | `tests/integration/test_memory_ehr_provider.py::TestPatientSearch` |
 | Booking with type-driven duration and slot consumption | `TestBooking` |
 | Double-booking refused; 5 concurrent bookings → exactly 1 winner | `test_concurrent_booking_of_one_slot_has_exactly_one_winner` |
@@ -153,10 +174,11 @@
 ## Last test results
 
 ```
-554 passed in 59.0s   (full suite, both EHR providers)
-397 passed in  2.0s   (offline suite: -m "not integration")
-157 passed in 40.6s   (HAPI integration suite only)
+598 passed in 47.3s   (full suite, both EHR providers)
+422 passed in  2.2s   (offline suite: -m "not integration")
 ```
+
+Try it: `python scripts/text_chat.py --script demo1 --trace`
 
 - The HAPI suite runs against a live FHIR 4.0.1 server via `make test-int`; it skips
   automatically when no server is reachable, so the default suite stays offline.
@@ -183,13 +205,18 @@
 5. **Name + DOB remains weak authentication**, as SAFETY.md states. The second factor is
    requested only on ambiguity, not always — matching common clinic practice, not good
    security. A real deployment needs more.
-6. **Safety detection is phrase-based.** It will miss paraphrases no rule anticipates —
+6. **Extraction is rule-based.** It handles the demo phrasings and the obvious
+   variations, and it will miss paraphrases no rule anticipated — the failure mode is
+   "I didn't understand", never a wrong action, because safety runs before extraction.
+   The LLM extractor in Phase 12 is what makes this robust.
+7. **Safety detection is phrase-based.** It will miss paraphrases no rule anticipates —
    testing caught exactly that with "ending my life" against a literal "end my life", now
    fixed with inflection-aware patterns. The model-flag layer exists to cover the gap, and
    the honest position is that this needs clinical review, adversarial testing, and real
    transcripts before anyone would trust it.
-7. **Nothing calls the classifier yet.** It runs before dispatch by construction once the
-   orchestrator exists (Phase 9).
+8. **Sessions live in one process.** The API's runtime is a module-level singleton, so a
+   second worker would not see the first's sessions. Fine for local development; Phase 11
+   fixes it properly.
 3. **The 15-minute slot grid rounds durations up.** A 20-minute visit occupies 30 minutes of
    grid. Documented in `docs/fhir-data-model.md`; a real template model would fix it.
 4. **No application database yet.** `session`, `turn`, `audit_event`, `escalation`,

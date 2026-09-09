@@ -119,6 +119,14 @@ class MedicationLookupWorkflow:
         state = LookupState(memory.get("state", LookupState.COLLECTING_IDENTITY.value))
         moment = now or datetime.now(UTC)
 
+        # "I forgot how much Metformin I take" names the drug before we have
+        # taken the caller's name. Keep it, or we ask which medication they
+        # meant a turn after they told us.
+        if turn.medication_name:
+            memory.set("medication_name", turn.medication_name)
+        if turn.list_all:
+            memory.set("list_all", True)
+
         try:
             if state is LookupState.COLLECTING_IDENTITY:
                 result = await self.identity.submit_identity(
@@ -163,8 +171,11 @@ class MedicationLookupWorkflow:
         self, session: SessionState, turn: MedicationLookupInput, now: datetime
     ) -> WorkflowResponse:
         patient_ref = require_verified_patient(session)
+        memory = self._memory(session)
+        medication_name = turn.medication_name or memory.get("medication_name")
+        list_all = turn.list_all or bool(memory.get("list_all", False))
 
-        if turn.list_all or not turn.medication_name:
+        if list_all or not medication_name:
             active = await self.medications.list_active(patient_ref)
             self.audit.record(
                 AuditAction.MEDICATIONS_READ,
@@ -180,7 +191,7 @@ class MedicationLookupWorkflow:
                     "wrong, I can pass you to our staff to check.",
                 )
             names = ", ".join(m.display_name for m in active)
-            if turn.list_all:
+            if list_all:
                 return self._answered(
                     session,
                     f"Your record shows {names}. Would you like the instructions for any of those?",
@@ -192,7 +203,7 @@ class MedicationLookupWorkflow:
                 f"Which medication did you mean? Your record shows {names}.",
             )
 
-        lookup = await self.medications.look_up(patient_ref, turn.medication_name)
+        lookup = await self.medications.look_up(patient_ref, medication_name)
         self.audit.record(
             AuditAction.MEDICATIONS_READ,
             session_id=session.session_id,
@@ -223,7 +234,7 @@ class MedicationLookupWorkflow:
                 suffix = f" Your record shows {names}." if names else ""
                 return self._answered(
                     session,
-                    f"I can't find an active prescription for {turn.medication_name} on "
+                    f"I can't find an active prescription for {medication_name} on "
                     f"your record.{suffix} I can pass you to our staff if that doesn't "
                     "look right.",
                 )

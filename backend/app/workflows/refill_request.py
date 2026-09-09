@@ -111,6 +111,10 @@ class RefillRequestWorkflow:
         state = RefillState(memory.get("state", RefillState.COLLECTING_IDENTITY.value))
         moment = now or datetime.now(UTC)
 
+        # The drug is usually named in the opening sentence, before identity.
+        if turn.medication_name:
+            memory.set("medication_name", turn.medication_name)
+
         try:
             if state is RefillState.COLLECTING_IDENTITY:
                 result = await self.identity.submit_identity(
@@ -156,8 +160,10 @@ class RefillRequestWorkflow:
         self, session: SessionState, turn: RefillRequestInput, now: datetime
     ) -> WorkflowResponse:
         patient_ref = require_verified_patient(session)
+        memory = self._memory(session)
+        medication_name = turn.medication_name or memory.get("medication_name")
 
-        if not turn.medication_name:
+        if not medication_name:
             active = await self.medications.list_active(patient_ref)
             if not active:
                 return self._escalate(
@@ -175,7 +181,7 @@ class RefillRequestWorkflow:
                 f"Which would you like refilled? Your record shows {names}.",
             )
 
-        lookup = await self.medications.look_up(patient_ref, turn.medication_name)
+        lookup = await self.medications.look_up(patient_ref, medication_name)
 
         if lookup.status is MedicationLookupStatus.AMBIGUOUS:
             options = ", ".join(lookup.candidates)
@@ -192,9 +198,9 @@ class RefillRequestWorkflow:
             return self._escalate(
                 session,
                 turn,
-                f"Refill requested for {turn.medication_name!r}, which is not an active "
+                f"Refill requested for {medication_name!r}, which is not an active "
                 "prescription on this patient's record.",
-                f"I can't find an active prescription for {turn.medication_name} on your "
+                f"I can't find an active prescription for {medication_name} on your "
                 "record, so I can't send a refill request for it. Let me pass you to our "
                 "staff to look into it.",
             )
@@ -203,7 +209,7 @@ class RefillRequestWorkflow:
         # a missing instruction does not stop the clinician reviewing a refill.
         medication = lookup.medication
         assert medication is not None
-        self._memory(session).set("medication", medication.model_dump(mode="json"))
+        memory.set("medication", medication.model_dump(mode="json"))
         return self._respond(
             session,
             RefillState.CONFIRMING,

@@ -63,3 +63,60 @@ def test_startup_seeds_the_in_memory_ehr(client: TestClient) -> None:
     store = get_default_memory_store()
     assert store.count("Patient") >= 5
     assert store.count("Slot") > 0
+
+
+class TestAgentEndpoints:
+    """The dev chat endpoint: the same runtime the CLI and voice agent use."""
+
+    def test_a_conversation_over_http(self, client: TestClient) -> None:
+        session_id = client.post("/api/agent/sessions", json={}).json()["session_id"]
+
+        opening = client.post(
+            f"/api/agent/sessions/{session_id}/turns",
+            json={"utterance": "Are you open on Saturday?"},
+        )
+        assert opening.status_code == 200
+        body = opening.json()
+        assert "closed on Saturday and Sunday" in body["message"]
+        assert body["trace"]["intent"] == "clinic_faq"
+        assert body["session"]["verification"] == "UNVERIFIED"
+
+    def test_the_trace_is_returned_with_each_turn(self, client: TestClient) -> None:
+        session_id = client.post("/api/agent/sessions", json={}).json()["session_id"]
+        body = client.post(
+            f"/api/agent/sessions/{session_id}/turns",
+            json={"utterance": "My blood pressure medicine makes me dizzy. Should I take half?"},
+        ).json()
+
+        trace = body["trace"]
+        assert trace["safety_outcome"] == "REFUSE_AND_ESCALATE"
+        assert trace["safety_category"] == "dose_modification"
+        assert trace["safety_rule"] == "medication.dose_modification"
+        assert trace["escalation_id"]
+        assert trace["timings"]["total_ms"] >= 0
+
+    def test_session_history_accumulates(self, client: TestClient) -> None:
+        session_id = client.post("/api/agent/sessions", json={}).json()["session_id"]
+        for utterance in ("Are you open on Saturday?", "Where are you located?"):
+            client.post(f"/api/agent/sessions/{session_id}/turns", json={"utterance": utterance})
+
+        detail = client.get(f"/api/agent/sessions/{session_id}").json()
+        assert len(detail["traces"]) == 2
+        assert [t["turn_number"] for t in detail["traces"]] == [1, 2]
+
+    def test_an_unknown_session_is_a_404(self, client: TestClient) -> None:
+        response = client.post("/api/agent/sessions/sess-nope/turns", json={"utterance": "hello"})
+        assert response.status_code == 404
+
+    def test_an_ended_session_refuses_further_turns(self, client: TestClient) -> None:
+        session_id = client.post("/api/agent/sessions", json={}).json()["session_id"]
+        client.post(f"/api/agent/sessions/{session_id}/end")
+        response = client.post(
+            f"/api/agent/sessions/{session_id}/turns", json={"utterance": "hello"}
+        )
+        assert response.status_code == 409
+
+    def test_an_empty_utterance_is_rejected(self, client: TestClient) -> None:
+        session_id = client.post("/api/agent/sessions", json={}).json()["session_id"]
+        response = client.post(f"/api/agent/sessions/{session_id}/turns", json={"utterance": ""})
+        assert response.status_code == 422

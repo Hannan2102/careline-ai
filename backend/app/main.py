@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
 
 from app import __version__
-from app.api import health, system
+from app.api import agent, health, system
 from app.config.settings import EHRProviderName, get_settings
 from app.ehr.factory import get_default_memory_store
 from app.ehr.seeding import seed_memory_store
@@ -73,6 +73,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(system.router)
+    app.include_router(agent.router)
     return app
 
 
