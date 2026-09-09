@@ -78,12 +78,22 @@ class TurnManager:
         speak: SpeakFn,
         timings: TurnTimings | None = None,
         on_close: Callable[[CloseReason], Awaitable[None]] | None = None,
+        on_interrupt: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self.session = session
         self.orchestrator = orchestrator
         self.speak = speak
         self.timings = timings or TurnTimings()
         self.on_close = on_close
+        #: Called when playback is cut off with audio still in flight.
+        #:
+        #: Cancelling the speak task stops us *producing* audio, which is all a
+        #: test can observe. Over a real transport it is not enough: everything
+        #: already handed to the client is sitting in its playback queue, and
+        #: barge-in that leaves the agent talking for another two seconds is
+        #: not barge-in. The transport uses this to tell the client to drop
+        #: what it is holding.
+        self.on_interrupt = on_interrupt
 
         self.state = VoiceState.LISTENING
         self.stats = TurnManagerStats()
@@ -252,6 +262,14 @@ class TurnManager:
         task = self._playback
         if task is None or task.done():
             return
+        # Before cancelling, not after: the client should stop playing at the
+        # moment the caller interrupted, not once the server has finished
+        # unwinding its own task.
+        if self.on_interrupt is not None:
+            try:
+                await self.on_interrupt()
+            except Exception as exc:
+                logger.warning("voice_interrupt_signal_failed", error=str(exc))
         current = asyncio.current_task()
         task.cancel()
         try:

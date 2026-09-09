@@ -30,7 +30,7 @@ class EHRProviderName(StrEnum):
 
 LLMProviderName = Literal["mock", "openai", "groq", "ollama"]
 STTProviderName = Literal["mock", "deepgram", "whisper"]
-TTSProviderName = Literal["mock", "elevenlabs", "piper"]
+TTSProviderName = Literal["mock", "groq", "elevenlabs", "piper"]
 
 #: Providers that cost money. Used by the budget guard and by startup validation.
 #:
@@ -95,6 +95,11 @@ class Settings(BaseSettings):
     elevenlabs_api_key: str | None = None
     elevenlabs_voice_id: str | None = None
     elevenlabs_model: str = "eleven_flash_v2_5"
+    #: Groq also serves TTS (Orpheus), on the same key and the same free tier.
+    #: Measured at ~400 ms to first audio -- slower than ElevenLabs Flash and
+    #: free, which is the trade this project takes (COSTS.md).
+    groq_tts_model: str = "canopylabs/orpheus-v1-english"
+    groq_tts_voice: str = "hannah"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen3:8b"
 
@@ -157,6 +162,8 @@ class Settings(BaseSettings):
             missing.append("DEEPGRAM_API_KEY (STT_PROVIDER=deepgram)")
         if self.tts_provider == "elevenlabs" and self.tts_enabled and not self.elevenlabs_api_key:
             missing.append("ELEVENLABS_API_KEY (TTS_PROVIDER=elevenlabs)")
+        if self.tts_provider == "groq" and self.tts_enabled and not self.groq_api_key:
+            missing.append("GROQ_API_KEY (TTS_PROVIDER=groq)")
         if missing:
             raise ValueError(
                 "Paid provider selected without credentials: "

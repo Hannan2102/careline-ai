@@ -25,7 +25,7 @@ class TTSProvider(Protocol):
 |---|---|---|---|
 | STT | `DeepgramSTTProvider` ✅ | `WhisperSTTProvider` | `MockSTTProvider` ✅ |
 | LLM | `OpenAILLMProvider` ✅ (OpenAI **and** Groq) | `OllamaLLMProvider` | `MockLLMProvider` ✅ |
-| TTS | `ElevenLabsTTSProvider` ✅ | `PiperTTSProvider` | `MockTTSProvider` ✅ |
+| TTS | `GroqTTSProvider` ✅ · `ElevenLabsTTSProvider` ✅ | `PiperTTSProvider` | `MockTTSProvider` ✅ |
 
 The cloud adapters talk to their vendors over `httpx` (and `websockets` for Deepgram
 streaming) rather than through vendor SDKs. The surface used is a handful of endpoints
@@ -38,6 +38,11 @@ a new adapter — which is the abstraction doing its job. Where a vendor genuine
 it is declared, not discovered: `supports_message_name=False` for Groq, which rejects
 `messages[].name`. Only tool-repair messages carry one, so an unfiltered payload works
 perfectly until the first time a model gets its arguments wrong.
+
+Groq appears under two kinds, LLM and TTS, on one key and one free tier. They are
+separate adapters because they share nothing but a hostname: `/audio/speech` is not an
+OpenAI-compatible chat endpoint, serves **WAV only**, and streams an unbounded RIFF header
+that has to be stripped as the bytes arrive (docs/voice-architecture.md).
 
 Credentials are attached **per request**, never only to the client. An adapter handed a
 client by its caller would otherwise look authenticated while sending no key — which is
@@ -62,9 +67,9 @@ test suite and default development mode use, so the interfaces stay honest.
 
 ```env
 AI_MODE=cloud    # cloud | local | mock
-LLM_PROVIDER=openai   # openai | groq | ollama | mock
-STT_PROVIDER=deepgram
-TTS_PROVIDER=elevenlabs
+LLM_PROVIDER=groq     # openai | groq | ollama | mock
+STT_PROVIDER=deepgram # deepgram | whisper | mock
+TTS_PROVIDER=groq     # groq | elevenlabs | piper | mock
 ```
 
 `AI_MODE=mock` forces all three to mocks regardless of the individual settings — a single

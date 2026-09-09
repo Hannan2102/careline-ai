@@ -4,7 +4,7 @@
 
 ## Current phase
 
-**Phases 0–12 complete; Phase 13 part-built.** The agent works end to end in text, what it does survives a restart, the dashboard makes every turn inspectable, and it can now reach a real model — verified live against Groq on 2026-09-09. Total spend to date: **$0.00**. The voice turn manager and session are built and tested offline — a full booking completes by voice with no audio hardware — and what remains of Phase 13 is the browser audio transport.
+**Phases 0–12 complete; Phase 13 built, awaiting a live microphone test.** The agent works end to end in text and the browser voice transport is built and verified at the socket level, what it does survives a restart, the dashboard makes every turn inspectable, and it reaches real models — verified live against Groq on 2026-09-09. Total spend to date: **$0.00**, and the voice stack keeps it there: Groq's free tier serves the model and the speech, Deepgram's $200 credit covers streaming recognition. ElevenLabs would have bought ~300 ms per turn for $6/month and was measured, then declined.
 
 ## Completed
 
@@ -158,7 +158,18 @@
 - `VoiceSession`: STT stream in, TTS out, transport-agnostic, with the per-session
   spending cap enforced *during* the call — the caller is offered a human, not hung up on
 - Time is injected into the manager, so 21 timing tests run in a third of a second
-- **Not done:** the audio transport. LiveKit versus a plain WebSocket is an open choice.
+- `/ws/voice`: a plain WebSocket, with capture in an `AudioWorklet` and playback scheduled
+  through Web Audio. Not WebRTC — barge-in needs acoustic echo cancellation, and that
+  comes from the browser rather than from the transport (ADR 007, which also records the
+  mistaken argument that nearly chose LiveKit)
+- `GroqTTSProvider`: Orpheus, measured at ~400 ms to first audio, free. The endpoint
+  serves WAV only and streams an unbounded RIFF header, so the adapter strips the
+  container as bytes arrive — a chunk-walking state machine, because a byte-offset error
+  there does not raise, it turns speech into static
+- The transport bug worth naming: cancelling synthesis stops the *server* producing audio,
+  but what already crossed the socket is queued in the browser. `on_interrupt` fires
+  before cancellation so the client drops it — without that, barge-in leaves the agent
+  talking for another second, and no mocked test would catch it
 
 ## What actually works — and how I know
 
@@ -247,6 +258,11 @@
 | The repair loop is bounded, per proposal | `TestRepair` |
 | Groq's rejection of `messages[].name` is handled, not discovered | `TestGroqCompatibility` |
 | A full booking completes by voice, with no audio hardware | `test_a_booking_completes_by_voice` |
+| Barge-in signals the client *before* cancelling playback | `test_the_turn_manager_signals_before_it_cancels` |
+| A streamed WAV header is stripped however the reads break | `test_survives_a_header_split_across_reads` |
+| Live speech synthesis produces speech, not static | `make smoke-voice` (level 0.053, listened to) |
+| The socket opens, negotiates rates, and closes cleanly | driven against a running server |
+
 | Speech during playback cancels it; a cough does not | `TestBargeIn` |
 | Interim transcripts never reach the orchestrator | `test_interim_transcripts_never_reach_the_orchestrator` |
 | A final arriving mid-turn is queued, never raced | `TestOneTurnAtATime` |
@@ -264,11 +280,16 @@
 | Ending a call keeps the patient it was about | `test_an_ended_call_keeps_the_patient_it_was_about` |
 | A trailing "yes" does not make a call read as "unknown" | `test_the_last_meaningful_intent_is_shown` |
 
+**Not yet verified:** a booking driven by a real microphone in a real browser. That needs
+a Deepgram key, which this project does not have yet. Everything below the microphone —
+the socket, the turn manager, the agent, and live speech synthesis — has been exercised;
+speech *recognition* in the browser has not.
+
 ## Last test results
 
 ```
 677 passed in 45.7s   (full suite, both EHR providers)
-477 passed in  3.4s   (offline suite: -m "not integration")
+619 passed in  6.0s   (offline suite: -m "not integration and not paid")
 ```
 
 Try it: `python scripts/text_chat.py --script demo1 --trace`
@@ -276,7 +297,7 @@ Try it: `python scripts/text_chat.py --script demo1 --trace`
 - The HAPI suite runs against a live FHIR 4.0.1 server via `make test-int`; it skips
   automatically when no server is reachable, so the default suite stays offline.
 - 2 warnings = third-party deprecations (starlette/anyio), not project code.
-- `ruff check` clean · `ruff format` clean · `mypy` strict clean across 83 source files.
+- `ruff check` clean · `ruff format` clean · `mypy` strict clean across 93 source files.
 - Dashboard: `eslint` clean · `tsc --noEmit` (strict, `noUncheckedIndexedAccess`) clean ·
   `next build` clean.
 - Zero network calls, zero cost.
@@ -364,6 +385,7 @@ Try it: `python scripts/text_chat.py --script demo1 --trace`
 | [004](docs/decisions/004-cloud-ai-providers.md) | Discrete STT → LLM → TTS, vendor-neutral |
 | [005](docs/decisions/005-text-vs-voice-testing.md) | Text mode is the primary test surface |
 | [006](docs/decisions/006-budget-controls.md) | Budget enforced in software |
+| [007](docs/decisions/007-voice-transport.md) | A plain WebSocket for browser audio, not WebRTC |
 
 One deliberate deviation from the original specification: **`create_refill_request` is not
 on the `EHRProvider` interface.** A refill request is a workflow artifact awaiting

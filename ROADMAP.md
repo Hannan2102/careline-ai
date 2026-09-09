@@ -215,16 +215,27 @@ fourth implementation.
 Browser mic → STT → agent → TTS → speaker.
 
 **Acceptance**
-- [ ] A full booking completes by voice **in the browser** — needs a transport;
-      the decision between LiveKit and a plain WebSocket is open
+- [ ] A full booking completes by voice **in the browser** — the transport is built
+      (ADR 007) and the socket contract is verified, but this has not been driven with a
+      live microphone: it needs a Deepgram key, which does not exist yet
 - [x] Barge-in, silence, and timeout handled by the turn manager
 - [x] Voice changes no business logic
 - [x] Session cost cap enforced live
 
-The turn manager and the voice session are complete and tested offline: a full booking
-runs end to end through scripted STT and counting TTS, with barge-in, queued finals,
-silence re-prompts, and the per-session cap all asserted. What is missing is only the
-audio transport between a browser and that session.
+The transport is a plain WebSocket, not WebRTC. Barge-in needs acoustic echo
+cancellation, and that comes from the browser (`getUserMedia`) rather than from the
+transport — the reasoning, including the mistaken argument that nearly chose LiveKit, is
+in ADR 007.
+
+Speech synthesis is Groq's Orpheus, measured at ~400 ms to first audio, which keeps the
+whole voice stack at **$0.00**: Groq's free tier serves the model and the speech, and
+Deepgram's $200 credit covers streaming recognition. ElevenLabs would buy ~300 ms for
+$6/month and was not taken.
+
+The transport-specific bug worth naming: cancelling synthesis stops the *server*
+producing audio, but whatever already crossed the socket is queued in the browser. The
+turn manager fires `on_interrupt` before cancelling so the client drops it — without
+that, barge-in leaves the agent talking for another second.
 
 ---
 

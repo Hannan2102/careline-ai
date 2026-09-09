@@ -37,8 +37,14 @@ RATES: dict[tuple[str, str], Decimal] = {
     ("openai", REQUESTS): Decimal("0"),
     # Deepgram streaming, per second of audio
     ("deepgram", STT_SECONDS): Decimal("0.00010000"),
-    # ElevenLabs Flash, per character
-    ("elevenlabs", TTS_CHARACTERS): Decimal("0.00003000"),
+    # ElevenLabs Flash, per character. Derived from the Starter plan -- $6/mo
+    # for 30,000 credits, at Flash's 0.5 credits per character -- because
+    # ElevenLabs sells a subscription, not usage. A prepaid bundle does not
+    # meter cleanly, so this deliberately prices the *marginal* character as if
+    # it were metered: the ledger's job is to stop an overrun, and a rate that
+    # under-reports cannot. The earlier 0.00003 figure was list per-character
+    # pricing from a plan this project does not use, and understated it ~3x.
+    ("elevenlabs", TTS_CHARACTERS): Decimal("0.00010000"),
     ("elevenlabs", TTS_SECONDS): Decimal("0"),
 }
 

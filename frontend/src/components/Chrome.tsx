@@ -6,6 +6,7 @@ import { API_BASE } from "@/lib/api";
 
 const LINKS = [
   { href: "/", label: "Overview" },
+  { href: "/voice", label: "Voice" },
   { href: "/calls", label: "Calls" },
   { href: "/trace", label: "Agent Trace" },
   { href: "/patients", label: "Patients" },

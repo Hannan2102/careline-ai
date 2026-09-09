@@ -102,3 +102,28 @@ these endpoints are exposed — noted in SAFETY.md as a gap, not glossed over.
 
 CORS is configured, never wildcarded: `DASHBOARD_ORIGINS` names the browser origins the
 API will answer, defaulting to the dashboard's development ports.
+
+
+## `GET /ws/voice` (WebSocket)
+
+The browser voice transport (ADR 007). Refused with an `error` event, not a dropped
+socket, when `TEXT_ONLY_MODE=true` or speech is disabled — that is the default
+configuration, so the message is the only thing that says how to change it.
+
+| Direction | Payload |
+|---|---|
+| client → server | binary: 16 kHz mono 16-bit PCM · JSON `{"type": "hangup"}` |
+| server → client | binary: 24 kHz mono 16-bit PCM |
+| server → client | `{"type": "ready", "session_id", "input_sample_rate", "output_sample_rate", "stt", "tts"}` |
+| server → client | `{"type": "transcript", "text", "is_final"}` — interims included, for display only |
+| server → client | `{"type": "interrupt"}` — **drop the playback queue**; the caller barged in |
+| server → client | `{"type": "closed", "reason", "session_id"}` |
+| server → client | `{"type": "error", "detail"}` |
+
+The session is ended — and therefore written to the database — however the socket closes,
+including on failure. A call that vanished from the dashboard because its transport broke
+would be exactly the call worth looking at.
+
+Inbound audio is queued with a bounded buffer and the newest frames are dropped when it
+fills. A microphone does not pause, and audio that is seconds late is not worth
+transcribing; the dropped count is logged rather than hidden.

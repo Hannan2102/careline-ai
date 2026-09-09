@@ -20,11 +20,12 @@ afterthought.
 | Docker | $0 |
 | FastAPI | $0 |
 | Next.js | $0 |
-| LiveKit | free tier |
+| WebSocket transport (ADR 007) | $0 |
 | GitHub | free tier |
 | **OpenAI** | **~$7** |
-| **Deepgram** | **~$4** |
-| **ElevenLabs** | **~$4** |
+| **Deepgram** | **$0** — $200 free credit, no card |
+| **Groq** (LLM *and* speech) | **$0** — free tier |
+| ~~ElevenLabs~~ | not used — see below |
 | Contingency | $0–$5 |
 | **Target total** | **~$15–$20** |
 
@@ -160,13 +161,38 @@ an **empty** message that had spent all 16 tokens thinking.
 At demo volume the LLM is ~8% of a voice turn's cost, and $7 of OpenAI budget buys ~12,500
 text turns. Groq's advantage here is latency and not needing a card, not the money.
 
-### Free STT is also available
+### The voice stack costs nothing (Phase 13, measured)
 
-Groq serves `whisper-large-v3` and `whisper-large-v3-turbo`. That is the ~$4 Deepgram line
-of the component budget, potentially at zero — worth evaluating in Phase 13. The catch is
-that it is batch transcription, not a streaming socket, and the latency budget assumes
-recognition finalises *while the caller is still speaking*. Not a drop-in for
-`DeepgramSTTProvider`; a real evaluation, not a free win.
+Groq's Whisper was evaluated as a free replacement for Deepgram and **rejected on
+latency**, which is the outcome that made the rest of the arithmetic work.
+
+| | STT | LLM | TTS | per turn | cash |
+|---|---|---|---|---|---|
+| all-Groq (batch Whisper) | ~830 ms | 133–496 ms | ~400 ms | 1360–1730 ms | $0.00 |
+| **Deepgram + Groq + Orpheus** | **150–400 ms** | **133–496 ms** | **~400 ms** | **680–1300 ms** | **$0.00** |
+| Deepgram + Groq + ElevenLabs | 150–400 ms | 133–496 ms | 75–150 ms | 360–1050 ms | $6.00 |
+
+Measured, not quoted: `whisper-large-v3` returned a perfect transcript of a 4.5-second
+utterance in **530 ms** and `-turbo` in **810 ms** — but that is *batch* latency, clocked
+after the utterance has finished. Deepgram streams while the caller speaks and finalises
+150–400 ms after they stop. Whisper additionally pays ~300 ms of silence detection before
+it can start. The gap is ~400–600 ms per turn, and it is the single largest latency lever
+in the pipeline.
+
+The middle row is what this project uses. Deepgram's **$200 free credit needs no card**
+and covers ~41,667 streaming minutes — about 13,900 three-minute calls, which is roughly
+13,900 more than a portfolio demo needs. Groq's free tier serves the model *and* the
+speech.
+
+ElevenLabs Flash is genuinely ~300 ms faster to first audio. It was not taken because its
+free tier grants **no API access and no commercial use**, so using it means the Starter
+plan at $6/month — the only cash line in the whole project. For a demo, "we measured it
+and chose the free path deliberately" is worth more than 300 ms.
+
+The metered rate for ElevenLabs was corrected at the same time. It had been $0.00003 per
+character, which is list pricing from a plan this project does not use; the Starter plan
+works out roughly 3× that, and a ledger that under-reports cannot enforce a ceiling. It
+is now $0.0001, priced as if the marginal character were metered.
 
 ## Live smoke tests
 

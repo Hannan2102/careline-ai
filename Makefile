@@ -6,7 +6,7 @@ PIP := uv pip install --python .venv/bin/python
 COMPOSE := docker compose
 
 .DEFAULT_GOAL := help
-.PHONY: help install up down logs reset seed wait-fhir dev chat dashboard dashboard-install dashboard-check test test-int lint fmt typecheck check budget smoke-cloud clean
+.PHONY: help install up down logs reset seed wait-fhir dev chat dashboard dashboard-install dashboard-check test test-int lint fmt typecheck check budget smoke-cloud smoke-voice voice clean
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -75,6 +75,15 @@ check: lint typecheck test ## Lint, type-check, and test
 
 budget: ## Print estimated API spend and remaining budget
 	$(PY) scripts/budget_status.py
+
+voice: ## Run the API and dashboard configured for voice in the browser
+	@echo "Backend: make dev   Dashboard: make dashboard   then open /voice"
+	@echo "Needs TEXT_ONLY_MODE=false, STT_ENABLED=true, TTS_ENABLED=true in .env."
+
+smoke-voice: ## Drive one whole voice call and save the audio to listen to (free)
+	@echo "Scripted speech in, real Groq speech out. Play smoke_voice.wav afterwards."
+	TEXT_ONLY_MODE=false TTS_ENABLED=true TTS_PROVIDER=groq \
+	  STT_ENABLED=true STT_PROVIDER=mock $(PY) scripts/smoke_voice.py
 
 smoke-cloud: ## ONE live paid call to verify a cloud adapter (costs money)
 	@echo "Contacts a real vendor. PROVIDER=<groq|openai|elevenlabs|deepgram>."

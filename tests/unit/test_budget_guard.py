@@ -130,9 +130,9 @@ class TestMetering:
         ledger.record("elevenlabs", TTS_CHARACTERS, 1000, session_id="s1")
         ledger.record("openai", INPUT_TOKENS, 1_000_000, session_id="s2")
 
-        assert ledger.session_total("s1") == Decimal("0.430000")
+        assert ledger.session_total("s1") == Decimal("0.500000")
         assert ledger.totals_by_provider()["openai"] == Decimal("0.800000")
-        assert ledger.project_total() == Decimal("0.830000")
+        assert ledger.project_total() == Decimal("0.900000")
 
     def test_unknown_metrics_cost_nothing_rather_than_raising(self) -> None:
         assert price("openai", "unmetered_thing", 10) == Decimal("0")

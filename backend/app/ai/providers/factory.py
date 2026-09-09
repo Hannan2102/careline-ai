@@ -126,8 +126,25 @@ class GuardedTTSProvider:
             logger.warning(
                 "budget_blocked_falling_back", provider=self.paid.name, reason=decision.reason
             )
-        async for chunk in provider.synthesize_stream(text, voice):
-            yield chunk
+        try:
+            async for chunk in provider.synthesize_stream(text, voice):
+                yield chunk
+        except ProviderUnavailableError as exc:
+            # A free tier makes an outage or a rate limit likely, and a caller
+            # mid-sentence is the worst moment to raise. Only safe to retry on
+            # the fallback because nothing has been yielded yet when the
+            # failure is the request itself -- which is when it happens: the
+            # adapters check status before the first chunk.
+            if provider is self.fallback:
+                raise
+            logger.error(
+                "tts_unavailable_falling_back",
+                provider=provider.name,
+                fallback=self.fallback.name,
+                error=str(exc),
+            )
+            async for chunk in self.fallback.synthesize_stream(text, voice):
+                yield chunk
 
 
 class GuardedSTTProvider:
@@ -256,6 +273,26 @@ def build_tts_provider(
 
     usage = ledger or get_usage_ledger()
     mock = MockTTSProvider()
+
+    if resolved.tts_provider == "groq":
+        if not resolved.groq_api_key:
+            logger.error("groq_tts_selected_without_key_falling_back_to_mock")
+            return mock
+        from app.ai.providers.tts.groq import GroqTTSProvider
+
+        # Free tier, like the Groq LLM: not in PAID_PROVIDERS, so the guard
+        # will not block it. Wrapped anyway -- the wrapper is what degrades to
+        # the deterministic path when the free tier rate-limits us.
+        groq_tts = GroqTTSProvider(
+            api_key=resolved.groq_api_key,
+            voice=resolved.groq_tts_voice,
+            model=resolved.groq_tts_model,
+            base_url=resolved.groq_base_url,
+            ledger=usage,
+            session_id=session_id,
+        )
+        logger.info("tts_provider_built", provider=groq_tts.name, model=resolved.groq_tts_model)
+        return GuardedTTSProvider(groq_tts, mock, BudgetGuard(resolved, usage), session_id)
 
     if (
         resolved.tts_provider == "elevenlabs"

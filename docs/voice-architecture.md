@@ -1,7 +1,7 @@
 # Voice architecture
 
-Phases 13–15. The turn manager and voice session are **built and tested** (Phase 13);
-the audio transport is not.
+Phases 13–15. The turn manager, the voice session, and the browser transport are
+**built and tested** (Phase 13). Telephony is not (Phase 15).
 
 ## What exists
 
@@ -22,11 +22,57 @@ were not separated.
 ## Pipeline
 
 ```
-mic → LiveKit → DeepgramSTTProvider → [turn manager] → orchestrator
-    → response text → ElevenLabsTTSProvider → LiveKit → speaker
+mic → AudioWorklet → WebSocket → DeepgramSTTProvider → [turn manager] → orchestrator
+    → response text → GroqTTSProvider → WebSocket → Web Audio → speaker
 ```
 
 The orchestrator is the same object text mode calls. Voice contributes no business logic.
+
+## Transport
+
+A plain WebSocket, not WebRTC (ADR 007). The short version: barge-in needs acoustic echo
+cancellation, and AEC comes from the **browser** — `getUserMedia({echoCancellation:
+true})` — regardless of what carries the bytes. WebRTC adds jitter buffering and packet
+loss concealment, which matter over a lossy network and not between a tab and a server on
+the same machine; a hosted SFU would add a round trip to a latency budget measured in
+hundreds of milliseconds.
+
+The wire protocol is deliberately small:
+
+| Direction | Payload |
+|---|---|
+| client → server | binary: 16 kHz mono 16-bit PCM · JSON: `{"type": "hangup"}` |
+| server → client | binary: 24 kHz mono 16-bit PCM · JSON: `ready`, `transcript`, `interrupt`, `closed`, `error` |
+
+`interrupt` is the one that is easy to omit and impossible to fake. Cancelling synthesis
+server-side stops us *producing* audio — all a unit test can observe — but whatever
+already crossed the socket sits in scheduled Web Audio nodes with start times in the
+future. Without it the agent keeps talking for a second after being interrupted. The turn
+manager fires `on_interrupt` **before** cancelling, so the client drops its queue at the
+moment the caller spoke rather than once the server has unwound its own task.
+
+Capture runs in an `AudioWorklet` (`frontend/public/mic-worklet.js`) so a React render
+cannot stall it, and the capture `AudioContext` is created at 16 kHz so the browser
+resamples the device — there is no hand-written interpolation in this project to get
+subtly wrong.
+
+Echo cancellation is requested, not guaranteed. `getSettings().echoCancellation` reports
+what was actually applied, and the dashboard warns when it was not: a browser that
+silently refuses AEC makes the agent interrupt its own sentences, which looks exactly
+like a server bug.
+
+## Speech synthesis
+
+Groq (Canopy Labs Orpheus), measured at **~400 ms to first audio** against ElevenLabs
+Flash's ~75–150 ms. Slower, and free on the same key the LLM uses; the ~300 ms sits
+inside the per-turn budget and the money it saves is the entire project budget (COSTS.md).
+
+The endpoint serves **WAV only** — `pcm`, `mp3`, `opus`, `flac` and `ogg` are all 400s —
+and streams it with an unbounded header (`RIFF\xff\xff\xff\xffWAVE`), because the total
+length is not known when the first byte is sent. Anything that trusts the declared frame
+count reads it as a 24-hour file. The adapter strips the container itself and yields bare
+PCM, as a chunk-walking state machine rather than "drop 44 bytes": a WAV header is not a
+fixed size, and a few bytes of offset does not raise — it turns speech into static.
 
 ## Turn manager
 
@@ -68,6 +114,9 @@ speculative narration of an unfinished EHR write is exactly the failure mode to 
 ## Telephony (Phase 15)
 
 `Patient phone → Twilio number → SIP trunk → LiveKit room → same voice agent.`
+
+This is where WebRTC becomes load-bearing, for reasons unrelated to the browser path:
+SIP interworking, and a genuinely lossy network. Nothing above `VoiceSession` changes.
 Telephony adds 8 kHz narrowband audio, DTMF, and carrier latency. It changes the STT
 configuration and nothing else.
 

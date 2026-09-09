@@ -92,18 +92,17 @@ Working today, end to end in text, at $0:
 - Persistence of sessions, turns, audit events, escalations, refills, and metered spend
 - An admin dashboard: overview, calls, agent trace, patients, appointments, escalations
 
-Not built yet: cloud AI providers, browser and telephony voice, the Epic adapter, and the
-local-model path. Those are Phases 12–18 and are deliberately *not* stubbed with fake
-behaviour.
+Not built yet: telephony voice, the Epic adapter, and the local-model path. Those are
+Phases 15–18 and are deliberately *not* stubbed with fake behaviour.
 
 ## Technology
 
 **Backend** Python 3.12, FastAPI, Pydantic v2, SQLAlchemy (async), httpx
 **Frontend** Next.js, React, TypeScript (strict), Tailwind
 **Data** PostgreSQL, HAPI FHIR R4, Synthea for bulk synthetic patients
-**AI (cloud)** OpenAI (LLM + tool calling), Deepgram (STT), ElevenLabs (TTS)
+**AI (cloud)** Groq or OpenAI (LLM + tool calling), Deepgram (STT), Groq/Orpheus or ElevenLabs (TTS)
 **AI (local, future)** Ollama/Qwen3, faster-whisper, Piper
-**Voice** LiveKit browser audio first; Twilio + SIP later
+**Voice** WebSocket + Web Audio in the browser (ADR 007); Twilio + SIP later
 **Ops** Docker Compose, GitHub Actions, ruff, mypy, pytest
 
 Every AI provider sits behind an interface. No business logic imports a vendor SDK —
@@ -202,10 +201,23 @@ Voice requires explicit opt-in in `.env`, and the budget guard must have headroo
 
 ```env
 TEXT_ONLY_MODE=false
-VOICE_ENABLED=true
 STT_ENABLED=true
 TTS_ENABLED=true
 AI_MODE=cloud
+LLM_PROVIDER=groq
+STT_PROVIDER=deepgram
+TTS_PROVIDER=groq
+```
+
+Then `make dev` and `make dashboard`, and open **/voice**. Use headphones, or check that
+the page does not warn about echo cancellation: without it the agent hears itself through
+the speakers and interrupts its own sentences.
+
+At those settings the whole voice stack costs **$0.00** — Groq's free tier serves the
+model and the speech, and Deepgram's $200 credit covers streaming recognition (COSTS.md).
+
+```bash
+make smoke-voice      # one whole call, scripted speech in, real audio out to listen to
 ```
 
 ### Disabling paid providers

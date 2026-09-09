@@ -56,6 +56,7 @@ class VoiceSession:
         voice: VoiceSpec | None = None,
         timings: TurnTimings | None = None,
         on_close: Callable[[CloseReason], Awaitable[None]] | None = None,
+        on_interrupt: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self.session = session
         self.stt = stt
@@ -71,6 +72,7 @@ class VoiceSession:
             speak=self._speak,
             timings=timings,
             on_close=on_close,
+            on_interrupt=on_interrupt,
         )
 
     @property
