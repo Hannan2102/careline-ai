@@ -86,12 +86,16 @@ multi-turn state machine (ADR 002).
 
 ---
 
-### ⬜ Phase 5 — Appointment management
-Lookup, cancel, reschedule.
+### ✅ Phase 5 — Appointment management
+Lookup, cancel, reschedule — with disambiguation when the patient has more than one.
 
 **Acceptance**
-- Cancellation releases the slot; reschedule releases old and books new atomically
-- All operations require verification and are audited
+- [x] Cancellation releases the slot, verified by re-searching availability
+- [x] Reschedule releases old and books new atomically; a lost race leaves the original
+      appointment in place and says so
+- [x] All operations require verification and are audited
+- [x] Several appointments are disambiguated before acting, rather than guessing
+- [x] The audit trail records what was touched, never the clinical content itself
 
 ---
 

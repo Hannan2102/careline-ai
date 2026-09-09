@@ -19,7 +19,8 @@ from pydantic import BaseModel, ConfigDict
 from app.agents.state import SessionState
 from app.config.clinic import find_practitioner_by_name
 from app.observability.logging import get_logger
-from app.schemas.domain import AppointmentType, EscalationCategory
+from app.schemas.domain import AppointmentType, AuditAction, EscalationCategory
+from app.services.audit_service import AuditService
 from app.services.base import ConflictError, NotFoundError, UpstreamUnavailableError
 from app.services.escalation_service import EscalationService
 from app.services.scheduling_service import (
@@ -94,10 +95,12 @@ class ExistingPatientBookingWorkflow:
         verification: VerificationService,
         scheduling: SchedulingService,
         escalations: EscalationService,
+        audit: AuditService | None = None,
     ) -> None:
         self.verification = verification
         self.scheduling = scheduling
         self.escalations = escalations
+        self.audit = audit or AuditService()
 
     # ---------------------------------------------------------------- entry
     async def start(self, session: SessionState) -> WorkflowResponse:
@@ -160,11 +163,17 @@ class ExistingPatientBookingWorkflow:
                 AwaitedInput.IDENTITY,
             )
 
+        self.audit.record(AuditAction.VERIFICATION_ATTEMPTED, session_id=session.session_id)
         result = await self.verification.verify_identity(
             session, turn.full_name, turn.date_of_birth
         )
 
         if result.outcome is VerificationOutcome.VERIFIED:
+            self.audit.record(
+                AuditAction.VERIFICATION_SUCCEEDED,
+                session_id=session.session_id,
+                patient_ref=session.patient_ref,
+            )
             return await self._after_verification(session, turn, now)
 
         if result.outcome is VerificationOutcome.SECOND_FACTOR_REQUIRED:
@@ -414,6 +423,14 @@ class ExistingPatientBookingWorkflow:
             memory.set("state", BookingState.OFFERING_SLOTS.value)
             return await self._search_and_offer(session, turn, now)
 
+        self.audit.record(
+            AuditAction.APPOINTMENT_BOOKED,
+            session_id=session.session_id,
+            patient_ref=patient_ref,
+            resource_type="Appointment",
+            resource_id=appointment.appointment_id,
+            detail=appointment_type.value,
+        )
         memory.set("state", BookingState.BOOKED.value)
         memory.set("appointment_id", appointment.appointment_id)
         session.active_workflow = None

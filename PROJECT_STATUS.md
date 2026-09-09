@@ -4,7 +4,7 @@
 
 ## Current phase
 
-**Phases 0–4 and 8 complete.** Next: Phase 5 (appointment management).
+**Phases 0–5 and 8 complete.** Next: Phase 6 (medication retrieval).
 
 ## Completed
 
@@ -68,6 +68,15 @@
 - Workflow memory is namespaced and JSON-serialisable, so a booking survives a
   round trip to storage
 
+**Phase 5 — Appointment management** ✅
+- `AppointmentManagementWorkflow` — lookup, cancel, reschedule, with disambiguation
+  when the patient has more than one appointment
+- A lookup answers when, who with, and where in one sentence
+- A lost reschedule race leaves the original appointment in place and says so
+- `AuditService` — append-only trail of every access and mutation, recording *that* a
+  record was touched and by which session, never the clinical content itself
+- Booking (Phase 4) was retrofitted to audit as well, for consistency
+
 ## What actually works — and how I know
 
 | Capability | Verified by |
@@ -103,6 +112,13 @@
 | Wrong DOB and unknown name reprompt identically | `test_wrong_details_reprompt_without_revealing_anything` |
 | A half-finished booking survives serialisation | `test_a_half_finished_booking_is_serialisable` |
 | A clinical question mid-booking refuses and leaves it resumable | `TestSafetyComposition` |
+| Cancelling frees the slot for rebooking | `test_cancelling_releases_the_slot` |
+| Rescheduling moves the booking and frees the old time | `test_rescheduling_moves_the_appointment_and_frees_the_old_slot` |
+| A lost reschedule race keeps the original appointment | `test_a_taken_slot_leaves_the_original_appointment_in_place` |
+| Several appointments are disambiguated before acting | `test_several_appointments_are_disambiguated_before_acting` |
+| Cancellation needs explicit confirmation | `test_cancellation_requires_explicit_confirmation` |
+| Reads, writes, and denials are all audited | `TestAuditTrail` |
+| The audit trail contains no names, dates of birth, or drugs | `test_the_audit_trail_holds_no_clinical_content` |
 | Patient search: exact, unknown, ambiguous, wrong DOB | `tests/integration/test_memory_ehr_provider.py::TestPatientSearch` |
 | Booking with type-driven duration and slot consumption | `TestBooking` |
 | Double-booking refused; 5 concurrent bookings → exactly 1 winner | `test_concurrent_booking_of_one_slot_has_exactly_one_winner` |
@@ -121,8 +137,8 @@
 ## Last test results
 
 ```
-465 passed in 98.8s   (full suite, both EHR providers)
-352 passed in  2.6s   (offline suite: -m "not integration")
+503 passed in 127.8s  (full suite, both EHR providers)
+371 passed in   2.0s  (offline suite: -m "not integration")
 ```
 
 - The HAPI suite runs against a live FHIR 4.0.1 server via `make test-int`; it skips
@@ -141,8 +157,10 @@
 3. **Ownership is checked against *booked* appointments only.** Cancelling an already
    cancelled appointment reports "not owned" rather than "already cancelled". Correct and
    safe, but the workflow will want the clearer message in Phase 5.
-4. **Sessions and escalations are in-process.** They vanish on restart and are not visible
-   across processes. Phase 11 persists both.
+4. **Sessions, escalations, and audit events are in-process.** They vanish on restart
+   and are not visible across processes. Phase 11 persists all three — and an audit trail
+   that does not survive a restart is not really an audit trail, which is why that phase
+   matters more than its position in the list suggests.
 5. **Name + DOB remains weak authentication**, as SAFETY.md states. The second factor is
    requested only on ambiguity, not always — matching common clinic practice, not good
    security. A real deployment needs more.
@@ -165,9 +183,8 @@
 
 ## Next tasks
 
-1. **Phase 5** — appointment lookup, cancellation, and rescheduling workflows.
-2. **Phase 6/7** — medication lookup and refill-request workflows.
-3. **Phase 9** — safety policies land before the agent can talk, so there is
+1. **Phase 6/7** — medication lookup and refill-request workflows.
+2. **Phase 9** — safety policies land before the agent can talk, so there is
    never a build in which the agent answers a clinical question.
 
 ## Architecture decisions

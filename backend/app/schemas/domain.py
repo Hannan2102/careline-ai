@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import date, datetime, time
 from decimal import Decimal
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -257,6 +258,43 @@ class Escalation(BaseModel):
     ai_action: str = "No clinical advice provided"
     created_at: datetime
     session_id: str | None = None
+
+
+class AuditAction(StrEnum):
+    """What was attempted. Reads are audited as well as writes."""
+
+    VERIFICATION_ATTEMPTED = "verification.attempted"
+    VERIFICATION_SUCCEEDED = "verification.succeeded"
+    VERIFICATION_FAILED = "verification.failed"
+    APPOINTMENTS_READ = "appointment.read"
+    APPOINTMENT_BOOKED = "appointment.booked"
+    APPOINTMENT_CANCELLED = "appointment.cancelled"
+    APPOINTMENT_RESCHEDULED = "appointment.rescheduled"
+    MEDICATIONS_READ = "medication.read"
+    REFILL_REQUESTED = "refill.requested"
+    ESCALATION_CREATED = "escalation.created"
+    ACCESS_DENIED = "access.denied"
+
+
+class AuditEvent(BaseModel):
+    """One entry in the append-only audit trail.
+
+    Records that something happened and to which record -- never the clinical
+    content itself. ``detail`` is for operational context, not for copying
+    demographics or instructions into a second place.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    event_id: str
+    action: AuditAction
+    session_id: str | None = None
+    patient_ref: str | None = None
+    resource_type: str | None = None
+    resource_id: str | None = None
+    outcome: Literal["success", "denied", "failure"] = "success"
+    detail: str | None = None
+    created_at: datetime
 
 
 class ProviderUsageRecord(BaseModel):

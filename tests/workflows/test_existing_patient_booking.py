@@ -402,6 +402,32 @@ class TestStateHandling:
         assert booked.appointment.patient_ref == session.patient_ref == JOHN_SMITH
 
 
+class TestAuditTrail:
+    async def test_a_completed_booking_is_audited(
+        self, ehr: EHRProvider, escalations: EscalationService, session: SessionState
+    ) -> None:
+        from app.schemas.domain import AuditAction
+        from app.services.audit_service import AuditService
+
+        audit = AuditService()
+        workflow = ExistingPatientBookingWorkflow(
+            verification=VerificationService(PatientService(ehr), escalations),
+            scheduling=SchedulingService(ehr),
+            escalations=escalations,
+            audit=audit,
+        )
+        await _verify(workflow, session)
+        await workflow.advance(session, BookingInput(reason="follow up"), now=NOW)
+        await workflow.advance(session, BookingInput(slot_choice=1), now=NOW)
+        booked = await workflow.advance(session, BookingInput(confirm=True), now=NOW)
+        assert booked.appointment is not None
+
+        event = next(e for e in audit.store.all() if e.action is AuditAction.APPOINTMENT_BOOKED)
+        assert event.resource_id == booked.appointment.appointment_id
+        assert event.patient_ref == JOHN_SMITH
+        assert AuditAction.VERIFICATION_SUCCEEDED in audit.store.actions()
+
+
 class TestSafetyComposition:
     """Safety runs before the workflow. Phase 9 makes this the orchestrator's job."""
 
