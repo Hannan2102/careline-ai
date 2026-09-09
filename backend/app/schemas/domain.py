@@ -74,6 +74,16 @@ class Priority(StrEnum):
     ADMINISTRATIVE = "administrative"
 
 
+class EscalationCategory(StrEnum):
+    """Why a conversation was handed to a human (SAFETY.md)."""
+
+    CLINICAL = "clinical"
+    FAILED_VERIFICATION = "failed-verification"
+    PATIENT_REQUESTED = "patient-requested"
+    SYSTEM_UNCERTAINTY = "system-uncertainty"
+    ADMINISTRATIVE = "administrative"
+
+
 class RefillStatus(StrEnum):
     PENDING_REVIEW = "PENDING_REVIEW"
     APPROVED = "APPROVED"
@@ -236,7 +246,7 @@ class Escalation(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     escalation_id: str
-    category: str
+    category: EscalationCategory
     priority: Priority
     destination: str
     summary: str

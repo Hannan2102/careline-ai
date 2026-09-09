@@ -37,3 +37,12 @@ class NotOwnedError(ServiceError):
 
 class UpstreamUnavailableError(ServiceError):
     """The EHR could not be reached. Degrade to a human, never to a guess."""
+
+
+class NotVerifiedError(ServiceError):
+    """PHI-shaped access was attempted without a verified session.
+
+    Raised by the gate in ``services/access_control.py``. The conversational
+    response is to ask for identity, never to reveal whether the requested
+    record exists.
+    """

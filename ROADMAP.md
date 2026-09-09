@@ -52,15 +52,21 @@ Domain services over the EHR interface: patients, scheduling, medications.
 
 ---
 
-### ⬜ Phase 3 — Patient verification
+### ✅ Phase 3 — Patient verification
 Session-scoped identity verification: name + DOB, secondary factor on ambiguity.
 
 **Acceptance**
-- Exactly one match → `VERIFIED`; zero matches → no information disclosed; multiple
-  matches → second factor requested, never disambiguated by leaking a record
-- Verification state cannot be set by conversation text, only by the verification service
-- Every PHI-shaped tool refuses when the session is unverified
-- Failed verification after N attempts creates an escalation
+- [x] Exactly one match → `VERIFIED`; zero matches → no information disclosed; multiple
+      matches → second factor requested, never disambiguated by leaking a record
+- [x] A wrong date of birth is byte-identical in response to an unknown name
+- [x] Verification state cannot be set by conversation text, only by the verification
+      service — `patient_ref` and `verification` are read-only properties, and the only
+      mutator requires a `VerificationDecision`
+- [x] The PHI gate (`require_verified_patient`) refuses unverified sessions, and refuses a
+      patient reference that does not match the session's own
+- [x] Failed verification after 3 attempts locks the session and creates an escalation
+- [ ] Every tool calls the gate — the tool layer lands in Phases 4–8; a contract test will
+      enumerate the tools once they exist
 
 ---
 

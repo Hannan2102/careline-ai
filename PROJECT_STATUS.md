@@ -4,7 +4,7 @@
 
 ## Current phase
 
-**Phase 2 complete.** Next: Phase 3 (patient verification).
+**Phase 3 complete.** Next: Phase 4 (appointment scheduling) — or Phase 8 (safety policies) first, so the safety layer exists before the agent can speak.
 
 ## Completed
 
@@ -39,6 +39,16 @@
 - One contract suite now runs against **both** EHR providers from a single body of
   test code, which is what actually proves they have not diverged
 
+**Phase 3 — Patient verification** ✅
+- `SessionState` with read-only verification: `session.patient_ref = ...` raises
+  `AttributeError`, and the only mutator requires a `VerificationDecision` that only
+  the verification service produces
+- `VerificationService` — name + DOB, second factor on ambiguity, 3-attempt lockout
+- `require_verified_patient` — the gate every PHI-shaped operation passes through
+- `EscalationService` — structured handoffs; failed verification routes to the front
+  desk (Phase 8 adds the clinical policies)
+- `SessionStore` with TTL expiry, so a verified session cannot be inherited later
+
 ## What actually works — and how I know
 
 | Capability | Verified by |
@@ -51,6 +61,15 @@
 | Altered dosage wording is rejected by the verbatim guard | `test_the_verbatim_guard_rejects_altered_wording` |
 | Reason → appointment type, with a flagged fallback | `tests/unit/test_appointment_classification.py` |
 | HAPI's own optimistic locking refuses a stale write | `tests/integration/test_hapi_server.py` |
+| Verification state cannot be assigned, only decided | `tests/unit/test_session_state.py` |
+| Wrong DOB and unknown name produce identical responses | `test_a_wrong_date_of_birth_is_indistinguishable...` |
+| Ambiguous matches never reveal candidates or their count | `test_the_candidates_are_never_revealed` |
+| A second factor matching several records verifies nobody | `test_a_second_factor_matching_several_records_is_refused` |
+| 3 failed attempts lock the session and escalate | `TestLockout` |
+| A locked session refuses even correct details | `test_a_locked_session_stops_accepting_attempts` |
+| Every PHI operation refuses without verification | `TestPhiOperationsThroughTheGate` |
+| A model-supplied patient id for another patient is refused | `test_a_mismatched_patient_reference_is_refused` |
+| Ending or expiring a session revokes access | `test_ending_the_session_closes_the_gate` |
 | Patient search: exact, unknown, ambiguous, wrong DOB | `tests/integration/test_memory_ehr_provider.py::TestPatientSearch` |
 | Booking with type-driven duration and slot consumption | `TestBooking` |
 | Double-booking refused; 5 concurrent bookings → exactly 1 winner | `test_concurrent_booking_of_one_slot_has_exactly_one_winner` |
@@ -69,8 +88,8 @@
 ## Last test results
 
 ```
-234 passed in 45.6s   (full suite, both EHR providers)
-166 passed in  1.0s   (offline suite: -m "not integration")
+294 passed in 88.0s   (full suite, both EHR providers)
+202 passed in  2.6s   (offline suite: -m "not integration")
 ```
 
 - The HAPI suite runs against a live FHIR 4.0.1 server via `make test-int`; it skips
@@ -89,6 +108,11 @@
 3. **Ownership is checked against *booked* appointments only.** Cancelling an already
    cancelled appointment reports "not owned" rather than "already cancelled". Correct and
    safe, but the workflow will want the clearer message in Phase 5.
+4. **Sessions and escalations are in-process.** They vanish on restart and are not visible
+   across processes. Phase 11 persists both.
+5. **Name + DOB remains weak authentication**, as SAFETY.md states. The second factor is
+   requested only on ambiguity, not always — matching common clinic practice, not good
+   security. A real deployment needs more.
 3. **The 15-minute slot grid rounds durations up.** A 20-minute visit occupies 30 minutes of
    grid. Documented in `docs/fhir-data-model.md`; a real template model would fix it.
 4. **No application database yet.** `session`, `turn`, `audit_event`, `escalation`,
@@ -101,10 +125,11 @@
 
 ## Next tasks
 
-1. **Phase 3** — verification service and session state. `PatientService` deliberately
-   returns candidates without deciding what a match count means; that decision is
-   Phase 3's, and it is the gate everything else depends on.
-2. **Phase 8 before Phase 9** — safety policies land before the agent can talk, so there is
+1. **Phase 8 before Phase 4–7** — the safety policies. Everything from here adds
+   capability; the safety layer decides what the agent may do with it, and it should
+   exist before there is an agent to constrain.
+2. **Phase 4/5** — booking and appointment-management workflows over the services.
+3. **Phase 9 last of that group** — safety policies land before the agent can talk, so there is
    never a build in which the agent answers a clinical question.
 
 ## Architecture decisions
