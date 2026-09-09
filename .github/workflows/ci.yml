@@ -55,6 +55,35 @@ jobs:
           test -z "${DEEPGRAM_API_KEY:-}" || (echo "DEEPGRAM_API_KEY must not be set in CI" && exit 1)
           test -z "${ELEVENLABS_API_KEY:-}" || (echo "ELEVENLABS_API_KEY must not be set in CI" && exit 1)
 
+  dashboard:
+    name: Dashboard (lint, types, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint (eslint)
+        run: npm run lint
+
+      - name: Type check (tsc --noEmit)
+        run: npm run typecheck
+
+      # The dashboard fetches from the browser, never during the build, so
+      # this needs no backend and reaches no network.
+      - name: Build
+        run: npm run build
+
   secrets-scan:
     name: No committed secrets
     runs-on: ubuntu-latest

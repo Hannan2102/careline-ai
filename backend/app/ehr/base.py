@@ -103,6 +103,30 @@ class EHRProvider(ABC):
     ) -> Patient:
         """Create a synthetic patient record (new-patient booking)."""
 
+    # ------------------------------------------------------ staff reads
+    #
+    # These two are *staff-facing* reads for the admin dashboard, and they are
+    # the only methods on this interface not scoped to one already-identified
+    # patient. Nothing in the agent runtime may call them: a caller-facing path
+    # that can list the roster defeats verification entirely (ADR 003). The
+    # dashboard itself is unauthenticated and local-only, which SAFETY.md
+    # records as a gap.
+
+    @abstractmethod
+    async def list_patients(self, query: str | None = None, limit: int = 50) -> list[Patient]:
+        """Roster search by name, family name first. ``query`` is a substring."""
+
+    @abstractmethod
+    async def list_appointments(
+        self,
+        start_date: date,
+        end_date: date,
+        practitioner_ref: str | None = None,
+        statuses: tuple[AppointmentStatus, ...] = (AppointmentStatus.BOOKED,),
+        limit: int = 200,
+    ) -> list[Appointment]:
+        """Clinic-wide schedule over a date range, earliest first."""
+
     # ------------------------------------------------------ practitioners
     @abstractmethod
     async def get_practitioners(self) -> list[Practitioner]: ...

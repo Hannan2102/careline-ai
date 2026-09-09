@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncIterator, Iterator
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -29,6 +29,12 @@ from app.fhir.client import FhirClient
 
 #: Fixed reference date so slot arithmetic is deterministic. A Tuesday.
 SEED_TODAY = date(2026, 9, 8)
+
+#: Fixed "now" inside the seeded window. Anything asking whether an appointment
+#: is still *upcoming* must compare against this, not the wall clock: the seed
+#: is pinned to SEED_TODAY, so a test using the real time passes until the real
+#: date overtakes the fixture and then fails for no reason anyone changed.
+SEED_NOW = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
 
 JOHN_SMITH = "Patient/demo-john-smith"
 JOHN_SMITH_DOB = date(1985, 2, 15)

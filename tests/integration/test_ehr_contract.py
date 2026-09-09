@@ -19,6 +19,7 @@ from tests.conftest import JOHN_SMITH, JOHN_SMITH_DOB, SEED_TODAY
 
 from app.ehr.base import EHRConflictError, EHRNotFoundError, EHRProvider
 from app.schemas.domain import AppointmentStatus, AppointmentType
+from app.utils.scheduling import clinic_date
 
 SEARCH_FROM = SEED_TODAY + timedelta(days=1)
 SEARCH_TO = SEED_TODAY + timedelta(days=14)
@@ -333,3 +334,77 @@ class TestPatientCreation:
             created.reference, slot.slot_id, AppointmentType.NEW_PATIENT, "First visit"
         )
         assert appointment.patient_ref == created.reference
+
+
+class TestStaffReads:
+    """The dashboard's roster and schedule reads (Phase 10).
+
+    Both providers must agree here for the same reason as everywhere else: the
+    dashboard is developed against the in-memory provider and demoed against
+    HAPI, and a difference between them would show up as a bug in the UI.
+    """
+
+    async def test_the_roster_lists_the_seeded_patients(self, ehr: EHRProvider) -> None:
+        patients = await ehr.list_patients()
+        names = [p.full_name for p in patients]
+        assert "John Smith" in names
+        assert all(p.is_synthetic for p in patients)
+
+    async def test_the_roster_is_sorted_by_family_name(self, ehr: EHRProvider) -> None:
+        patients = await ehr.list_patients()
+        keys = [(p.family_name.lower(), p.given_name.lower()) for p in patients]
+        assert keys == sorted(keys)
+
+    async def test_a_query_filters_by_substring_of_the_full_name(self, ehr: EHRProvider) -> None:
+        assert [p.full_name for p in await ehr.list_patients(query="Smith")] == ["John Smith"]
+
+    async def test_a_query_matching_nobody_returns_nothing(self, ehr: EHRProvider) -> None:
+        assert await ehr.list_patients(query="Zzzz") == []
+
+    async def test_the_roster_respects_its_limit(self, ehr: EHRProvider) -> None:
+        assert len(await ehr.list_patients(limit=1)) == 1
+
+    async def test_the_schedule_returns_appointments_across_patients(
+        self, ehr: EHRProvider
+    ) -> None:
+        booked = await ehr.list_appointments(SEED_TODAY, SEED_TODAY + timedelta(days=30))
+        assert booked, "the seed includes at least one booked appointment"
+        assert all(a.status is AppointmentStatus.BOOKED for a in booked)
+        assert booked == sorted(booked, key=lambda a: a.start)
+
+    async def test_the_schedule_honours_its_date_range(self, ehr: EHRProvider) -> None:
+        window = await ehr.list_appointments(SEED_TODAY, SEED_TODAY + timedelta(days=30))
+        for appointment in window:
+            assert SEED_TODAY <= clinic_date(appointment.start) <= SEED_TODAY + timedelta(days=30)
+        assert (
+            await ehr.list_appointments(
+                SEED_TODAY - timedelta(days=60), SEED_TODAY - timedelta(days=59)
+            )
+            == []
+        )
+
+    async def test_the_schedule_can_be_filtered_by_practitioner(self, ehr: EHRProvider) -> None:
+        everyone = await ehr.list_appointments(SEED_TODAY, SEED_TODAY + timedelta(days=30))
+        assert everyone
+        chosen = everyone[0].practitioner_ref
+        theirs = await ehr.list_appointments(
+            SEED_TODAY, SEED_TODAY + timedelta(days=30), practitioner_ref=chosen
+        )
+        assert theirs
+        assert {a.practitioner_ref for a in theirs} == {chosen}
+
+    async def test_a_cancelled_appointment_leaves_the_booked_schedule(
+        self, ehr: EHRProvider
+    ) -> None:
+        window = (SEED_TODAY, SEED_TODAY + timedelta(days=30))
+        before = await ehr.list_appointments(*window)
+        assert before
+        await ehr.cancel_appointment(before[0].appointment_id)
+
+        after = await ehr.list_appointments(*window)
+        assert before[0].appointment_id not in {a.appointment_id for a in after}
+
+        including_cancelled = await ehr.list_appointments(
+            *window, statuses=(AppointmentStatus.BOOKED, AppointmentStatus.CANCELLED)
+        )
+        assert before[0].appointment_id in {a.appointment_id for a in including_cancelled}

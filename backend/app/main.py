@@ -1,8 +1,8 @@
 """FastAPI application entrypoint.
 
-Phase 1 exposes system endpoints only. Patient, appointment, medication,
-escalation, and agent routers arrive with their phases (ROADMAP.md) -- they are
-deliberately not stubbed with fake behaviour.
+Routers arrive with their phases (ROADMAP.md) rather than being stubbed with
+fake behaviour: system in Phase 1, the agent in Phase 9, and the dashboard's
+read side -- calls, traces, escalations, records, usage -- in Phase 10.
 """
 
 from __future__ import annotations
@@ -12,13 +12,14 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
+from app.agents.factory import open_database
 from app.ai.usage import get_usage_ledger
-from app.api import agent, health, system
+from app.api import agent, calls, escalations, health, records, system, usage
 from app.config.settings import EHRProviderName, get_settings
 from app.db.engine import Database
-from app.db.repositories import total_estimated_cost
 from app.ehr.factory import get_default_memory_store
 from app.ehr.seeding import seed_memory_store
 from app.observability.logging import bind_trace, clear_trace, configure_logging, get_logger
@@ -46,15 +47,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         summary = await seed_memory_store(get_default_memory_store())
         logger.info("seeded_memory_ehr", **summary)
 
-    if settings.persistence_enabled:
-        database = Database.from_settings(settings)
-        await database.create_schema()
+    database = await open_database(settings)
+    if database is not None:
         app.state.database = database
-        # Carry forward spend from previous runs before anything can spend
-        # more, so the budget ceiling means "this project" and not "this boot".
-        async with database.session() as db:
-            carried = await total_estimated_cost(db)
-        get_usage_ledger().set_baseline(carried)
+        carried = get_usage_ledger().baseline
         if carried > 0:
             logger.info("usage_baseline_restored", estimated_spend_usd=str(carried))
 
@@ -95,9 +91,23 @@ def create_app() -> FastAPI:
         response.headers["X-Trace-Id"] = trace_id
         return response
 
+    # The dashboard is a separate origin in development (Next.js on :3000).
+    # Origins are configured, never "*": a wildcard here would be a habit worth
+    # not forming, even on a local-only app.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=get_settings().dashboard_origins,
+        allow_methods=["GET", "POST"],
+        allow_headers=["*"],
+    )
+
     app.include_router(health.router)
     app.include_router(system.router)
     app.include_router(agent.router)
+    app.include_router(calls.router)
+    app.include_router(escalations.router)
+    app.include_router(records.router)
+    app.include_router(usage.router)
     return app
 
 

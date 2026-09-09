@@ -112,6 +112,6 @@ async def get_session(session_id: str, runtime: Runtime = Depends(get_runtime)) 
 @router.post("/sessions/{session_id}/end", response_model=SessionSnapshot)
 async def end_session(session_id: str, runtime: Runtime = Depends(get_runtime)) -> SessionSnapshot:
     try:
-        return runtime.sessions.end(session_id).snapshot()
+        return (await runtime.end_session(session_id)).snapshot()
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

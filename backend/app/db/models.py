@@ -92,6 +92,10 @@ class AuditEventRow(Base):
     event_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     action: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     session_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    #: The turn that produced this event. Set by the persistence flush, which
+    #: writes each turn's new events together; it is what lets the Agent Trace
+    #: page show the record operations belonging to one exchange.
+    turn_id: Mapped[str | None] = mapped_column(String(64), index=True)
     patient_ref: Mapped[str | None] = mapped_column(String(128), index=True)
     resource_type: Mapped[str | None] = mapped_column(String(64))
     resource_id: Mapped[str | None] = mapped_column(String(128))

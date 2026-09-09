@@ -77,23 +77,23 @@ Twilio path: **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
 ## Current status
 
-**Phase 1 of 18** — foundation. See [PROJECT_STATUS.md](PROJECT_STATUS.md) for the
-authoritative, continuously-updated status, and [ROADMAP.md](ROADMAP.md) for phase
-acceptance criteria.
+**Phases 0–11 of 18.** See [PROJECT_STATUS.md](PROJECT_STATUS.md) for the authoritative,
+continuously-updated status, and [ROADMAP.md](ROADMAP.md) for phase acceptance criteria.
 
-Working today:
+Working today, end to end in text, at $0:
 
-- Repo, architecture, and decision records
-- FastAPI backend with `/health` and `/api/system/status`
-- `EHRProvider` interface + two implementations: `MemoryFHIRProvider` (no Docker) and
-  `LocalFHIRProvider` (HAPI FHIR R4 over REST)
-- FHIR R4 client and resource ↔ domain-model mappings
-- Curated synthetic clinic + patients, loadable into either provider
-- Budget/usage configuration and guard (no paid API calls are possible yet)
-- Test suite, green, with zero network and zero cost
+- `EHRProvider` interface + two implementations — `MemoryFHIRProvider` (no Docker) and
+  `LocalFHIRProvider` (HAPI FHIR R4 over REST) — held to one contract suite
+- Session-scoped verification, and access control that refuses on both the unverified and
+  the mismatched-patient case
+- Booking, rescheduling, cancellation, medication lookup, refill requests, clinic FAQ
+- A safety layer that refuses clinical questions and escalates them with context
+- An agent runtime with a full per-turn trace, and a text CLI (`make chat`)
+- Persistence of sessions, turns, audit events, escalations, refills, and metered spend
+- An admin dashboard: overview, calls, agent trace, patients, appointments, escalations
 
-Not built yet: the agent runtime, workflows, safety policies, dashboard, and every
-voice provider. Those are Phases 3–18 and are deliberately *not* stubbed with fake
+Not built yet: cloud AI providers, browser and telephony voice, the Epic adapter, and the
+local-model path. Those are Phases 12–18 and are deliberately *not* stubbed with fake
 behaviour.
 
 ## Technology
@@ -166,21 +166,34 @@ make dev
 | `make reset` | destroy volumes, recreate, reseed |
 | `make seed` | load curated clinic, providers, patients |
 | `make dev` | run the FastAPI backend |
+| `make chat` | talk to the agent in the terminal |
+| `make dashboard` | run the admin dashboard (needs `make dev` too) |
 | `make test` | run the test suite (no network, no cost) |
 | `make budget` | print estimated spend and remaining budget |
 | `make lint` / `make typecheck` / `make fmt` | ruff / mypy / format |
+
+### The dashboard
+
+The admin dashboard is a separate Next.js app in [frontend/](frontend/). It reads the
+backend's API from the browser, so the backend must be running.
+
+```bash
+make dev          # terminal 1 — the API on :8000
+make dashboard    # terminal 2 — the dashboard on :3000
+```
+
+The Agent Trace page is the one that matters: every field recorded for every turn, from
+the safety decision and the rule that fired through to per-stage latency and estimated
+cost. Details in [frontend/README.md](frontend/README.md).
 
 ### Text mode
 
 Text mode is the default and shares **the same workflows** as voice — there is no second
 implementation of the business logic.
 
-The agent runtime and its CLI (`scripts/text_chat.py`) arrive in **Phase 9**. Until then
-the foundation is exercised through the API and the test suite:
-
 ```bash
-make dev                                   # http://localhost:8000/docs
-curl -s localhost:8000/api/system/status   # EHR, providers, modes, budget
+make chat                                  # talk to the agent in the terminal
+make chat ARGS="--script demo3 --trace"    # a scripted demo, with the per-turn trace
 ```
 
 ### Voice mode
@@ -237,9 +250,11 @@ mapping and example requests: **[FHIR.md](FHIR.md)**.
 
 ## Demo
 
-Screenshots and a recorded walkthrough land here once the dashboard exists (Phase 10).
-See [DEMO.md](DEMO.md) for the scripted scenarios, including the medication-safety
-escalation.
+Run `make dev`, `make dashboard`, then `make chat` and watch the call appear on the
+dashboard's Calls page and unfold, turn by turn, on Agent Trace. For a booking to show up
+on the Appointments page too, run against HAPI (`EHR_PROVIDER=local`): with the in-process
+provider the CLI and the API each hold their own store. See [DEMO.md](DEMO.md)
+for the scripted scenarios, including the medication-safety escalation.
 
 ## Licence
 

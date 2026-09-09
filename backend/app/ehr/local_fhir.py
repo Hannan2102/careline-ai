@@ -50,6 +50,7 @@ from app.utils.scheduling import (
     date_range,
     fits_within_working_hours,
     grid_starts,
+    in_date_range,
     intervals_overlap,
     slot_id_for,
     to_utc,
@@ -113,6 +114,51 @@ class LocalFHIRProvider(EHRProvider):
         )
         created = await self.client.update(patient_to_fhir(draft))
         return patient_to_domain(created)
+
+    # ------------------------------------------------------ staff reads
+    async def list_patients(self, query: str | None = None, limit: int = 50) -> list[Patient]:
+        params: dict[str, object] = {"_count": min(limit, 100)}
+        needle = (query or "").strip()
+        if needle:
+            params["name"] = needle
+        resources = await self.client.search("Patient", params, page_limit=2)
+        patients = [patient_to_domain(r) for r in resources]
+        # The server's `name` search is a prefix match per name part; the
+        # dashboard promises a substring, so narrow it here rather than let the
+        # two providers disagree about what a search means.
+        if needle:
+            lowered = needle.lower()
+            patients = [p for p in patients if lowered in p.full_name.lower()]
+        patients.sort(key=lambda p: (p.family_name.lower(), p.given_name.lower()))
+        return patients[:limit]
+
+    async def list_appointments(
+        self,
+        start_date: date,
+        end_date: date,
+        practitioner_ref: str | None = None,
+        statuses: tuple[AppointmentStatus, ...] = (AppointmentStatus.BOOKED,),
+        limit: int = 200,
+    ) -> list[Appointment]:
+        # `date` is repeated, which FHIR ANDs. The window is widened by a day
+        # on each side because the search is in UTC and the range is
+        # clinic-local; `in_date_range` then trims it back exactly.
+        params: dict[str, object] = {
+            "date": [
+                f"ge{start_date - timedelta(days=1)}",
+                f"le{end_date + timedelta(days=1)}",
+            ],
+            "status": ",".join(s.value for s in statuses),
+            "_count": min(limit, 200),
+        }
+        if practitioner_ref is not None:
+            params["actor"] = practitioner_ref
+        resources = await self.client.search("Appointment", params, page_limit=3)
+        appointments = [appointment_to_domain(r) for r in resources]
+        return sorted(
+            (a for a in appointments if in_date_range(a.start, start_date, end_date)),
+            key=lambda a: a.start,
+        )[:limit]
 
     # ------------------------------------------------------ practitioners
     async def get_practitioners(self) -> list[Practitioner]:

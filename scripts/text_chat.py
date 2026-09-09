@@ -21,7 +21,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "backend"))
 
-from app.agents.factory import build_runtime  # noqa: E402
+from app.agents.factory import build_runtime, open_database  # noqa: E402
 from app.agents.state import SessionChannel  # noqa: E402
 from app.agents.trace import TurnTrace  # noqa: E402
 from app.config.settings import EHRProviderName, get_settings  # noqa: E402
@@ -101,7 +101,11 @@ async def main() -> int:
     if settings.ehr_provider is EHRProviderName.MEMORY:
         await seed_memory_store(get_default_memory_store())
 
-    runtime = build_runtime(settings=settings)
+    # The same database the API uses, so a conversation held here shows up on
+    # the dashboard. A CLI that recorded nothing would make `make chat` a
+    # different product from the one the dashboard describes.
+    database = await open_database(settings)
+    runtime = build_runtime(settings=settings, database=database)
     session = runtime.sessions.create(channel=SessionChannel.TEXT)
 
     print(f"{BOLD}CareLine AI — Oakwood Family Medicine{RESET}")
@@ -138,7 +142,7 @@ async def main() -> int:
             show_trace(result.trace)
             print()
 
-    runtime.sessions.end(session.session_id)
+    await runtime.end_session(session.session_id)
     escalations = runtime.escalations.store.for_session(session.session_id)
     if escalations:
         print(f"{DIM}Escalations raised: {', '.join(e.category.value for e in escalations)}{RESET}")
@@ -146,6 +150,9 @@ async def main() -> int:
         f"{DIM}Estimated cost this session: "
         f"${float(runtime.ledger.session_total(session.session_id)):.4f}{RESET}"
     )
+    if database is not None:
+        print(f"{DIM}Recorded. Open the dashboard's Agent Trace to inspect it.{RESET}")
+        await database.dispose()
     return 0
 
 

@@ -4,7 +4,7 @@
 
 ## Current phase
 
-**Phases 0–9 and 11 complete.** The agent works end to end in text, at $0, and what it does now survives a restart. Next: Phase 10 (admin dashboard).
+**Phases 0–11 complete.** The agent works end to end in text, at $0, what it does survives a restart, and the dashboard makes every turn inspectable. Next: Phase 12 (cloud AI providers — the first phase that can spend money).
 
 ## Completed
 
@@ -108,6 +108,29 @@
 - `make budget` reads the persisted ledger
 - A database failure logs and degrades to in-memory: the caller is on the phone
 
+**Phase 10 — Admin dashboard** ✅
+- Verified live, not only in tests: four scripted conversations driven through the CLI,
+  read back through every dashboard endpoint, with a booking made against a real HAPI
+  server appearing on the Appointments page
+- Next.js App Router + TypeScript strict + Tailwind: Overview, Calls, Agent Trace,
+  Patients, Appointments, Escalations
+- Agent Trace renders **every** field of a persisted turn — transcript, safety decision
+  and the rule that fired, intent and confidence, entities, workflow and its state, each
+  audited record operation, per-stage latency, and estimated cost
+- Audit events now carry the `turn_id` that produced them, which is what lets the trace
+  attribute record operations to the exchange that caused them
+- Backend read APIs: `/api/calls`, `/api/calls/{id}/trace`, `/api/escalations`,
+  `/api/medications/refill-requests`, `/api/patients`, `/api/appointments`,
+  `/api/providers`, `/api/overview`, `/api/usage/summary`
+- Two staff-facing reads added to `EHRProvider` (`list_patients`, `list_appointments`),
+  held to the same both-providers contract suite as everything else
+- The synthetic-data banner is fixed to every route and cannot be dismissed
+- Read-only: no staff action exists, because no staff authentication exists
+- Two bugs the live run found that the tests had not: `make chat` persisted nothing
+  (the CLI built a runtime with no database, so a terminal conversation could never
+  reach the dashboard), and ending a session wrote its *revoked* state over the row,
+  erasing which patient the call had been about. Both fixed, both now covered
+
 ## What actually works — and how I know
 
 | Capability | Verified by |
@@ -183,12 +206,20 @@
 | Override honoured in development, ignored in production | `TestOverride` |
 | Paid provider without a key fails at startup | `tests/unit/test_settings.py` |
 | `/health` and `/api/system/status` | `tests/integration/test_api.py` |
+| Every dashboard endpoint, against data a real turn produced | `tests/integration/test_dashboard_api.py` |
+| The trace exposes every field of a turn record | `test_every_turn_field_is_present` |
+| Record operations are attributed to the turn that caused them | `test_operations_are_attributed_to_their_turn` |
+| The roster and schedule reads agree on **both** providers | `TestStaffReads` |
+| The dashboard says why it is empty when persistence is off | `test_the_read_apis_say_why_they_are_empty` |
+| Dashboard lint, `tsc --noEmit` (strict), and `next build` | CI job `dashboard` |
+| Ending a call keeps the patient it was about | `test_an_ended_call_keeps_the_patient_it_was_about` |
+| A trailing "yes" does not make a call read as "unknown" | `test_the_last_meaningful_intent_is_shown` |
 
 ## Last test results
 
 ```
-598 passed in 47.3s   (full suite, both EHR providers)
-422 passed in  2.2s   (offline suite: -m "not integration")
+677 passed in 45.7s   (full suite, both EHR providers)
+477 passed in  3.4s   (offline suite: -m "not integration")
 ```
 
 Try it: `python scripts/text_chat.py --script demo1 --trace`
@@ -196,7 +227,9 @@ Try it: `python scripts/text_chat.py --script demo1 --trace`
 - The HAPI suite runs against a live FHIR 4.0.1 server via `make test-int`; it skips
   automatically when no server is reachable, so the default suite stays offline.
 - 2 warnings = third-party deprecations (starlette/anyio), not project code.
-- `ruff check` clean · `ruff format` clean · `mypy` strict clean across 40 source files.
+- `ruff check` clean · `ruff format` clean · `mypy` strict clean across 83 source files.
+- Dashboard: `eslint` clean · `tsc --noEmit` (strict, `noUncheckedIndexedAccess`) clean ·
+  `next build` clean.
 - Zero network calls, zero cost.
 
 ## Known problems and gaps
@@ -235,20 +268,32 @@ Try it: `python scripts/text_chat.py --script demo1 --trace`
 9. **No migrations.** Schema is created with `create_all`, because every environment
    builds it from scratch and there is nothing to migrate yet. Alembic belongs here the
    moment a deployed database must survive a schema change.
-3. **The 15-minute slot grid rounds durations up.** A 20-minute visit occupies 30 minutes of
-   grid. Documented in `docs/fhir-data-model.md`; a real template model would fix it.
-4. **No application database yet.** `session`, `turn`, `audit_event`, `escalation`,
-   `refill_request`, and `provider_usage` are designed but not implemented; the usage
-   ledger is in-memory and resets with the process (Phase 11).
-5. **Name + DOB is weak authentication.** Deliberate, matching common clinic practice, and
-   called out as a gap in SAFETY.md rather than glossed over.
-6. **`get_practitioners` reads the curated roster** rather than querying `PractitionerRole`.
+10. **The 15-minute slot grid rounds durations up.** A 20-minute visit occupies 30 minutes
+   of grid. Documented in `docs/fhir-data-model.md`; a real template model would fix it.
+11. **`get_practitioners` reads the curated roster** rather than querying `PractitionerRole`.
    Fine for a fixed three-provider clinic; revisit if the roster becomes dynamic.
+12. **The dashboard is unauthenticated and read-only.** It exposes every synthetic chart
+   and every call to anyone who can reach the port, which is acceptable only because it
+   is local-only and the data is invented. It is also why there is no "approve refill" or
+   "resolve escalation" button: a staff action needs a staff identity, and there is none.
+   Authentication and role-based access are the prerequisite, not the button.
+13. **With `EHR_PROVIDER=memory`, the CLI and the API do not share an EHR.** Each process
+   holds its own in-process store, so a booking made in `make chat` will not appear on the
+   dashboard's Patients or Appointments pages — the *call*, trace, and escalations will,
+   because those go through the shared database. Running against HAPI
+   (`EHR_PROVIDER=local`) shares the record and behaves as expected; this is verified
+   both ways. It is the in-process provider's nature, not a defect, but it is a
+   sharp edge in a demo and the docs now say so.
+14. **`EHRProvider` now has two reads not scoped to one patient** — `list_patients` and
+   `list_appointments`, for the dashboard. Nothing in the agent runtime calls them, and a
+   caller-facing path that could would defeat verification entirely. That constraint is
+   currently a comment on the interface and a code review, not something enforced.
 
 ## Next tasks
 
-1. **Phase 9** — safety policies land before the agent can talk, so there is
-   never a build in which the agent answers a clinical question.
+1. **Phase 12 — cloud AI providers.** The first phase that can spend money. The budget
+   guard, the persisted ledger, and the carried-forward baseline all exist precisely so
+   that this phase cannot quietly run past $20.
 
 ## Architecture decisions
 

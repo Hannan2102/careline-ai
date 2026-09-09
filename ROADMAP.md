@@ -166,7 +166,7 @@ Safety runs before extraction either way, so a missed extraction can only ever p
 
 ---
 
-### ⬜ Phase 10 — Admin dashboard
+### ✅ Phase 10 — Admin dashboard
 Next.js: Overview, Calls, Agent Trace, Patients, Appointments, Escalations.
 
 **Acceptance**

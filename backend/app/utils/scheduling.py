@@ -102,3 +102,17 @@ def intervals_overlap(
 def to_utc(value: datetime) -> datetime:
     """Normalise to UTC, treating a naive datetime as already UTC."""
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def clinic_date(moment: datetime) -> date:
+    """The clinic-local calendar date of an instant.
+
+    A 6pm appointment in New York is the *next* day in UTC, so filtering a
+    schedule by UTC date would silently move evening appointments.
+    """
+    return to_utc(moment).astimezone(CLINIC_TIMEZONE).date()
+
+
+def in_date_range(moment: datetime, start_date: date, end_date: date) -> bool:
+    """Whether an instant falls inside an inclusive clinic-local date range."""
+    return start_date <= clinic_date(moment) <= end_date

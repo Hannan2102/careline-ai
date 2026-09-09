@@ -288,6 +288,17 @@ entities, workflow, safety decision, each tool call with arguments and result, f
 response, per-stage latency, and estimated turn cost. This record is what the dashboard's
 Agent Trace page renders — it exists for debugging first and demo second.
 
+The dashboard is a separate Next.js app that reads the backend's HTTP API **from the
+browser**. It holds no business logic and shares no code with the backend; it is a client
+like any other, which is why adding it required read endpoints rather than a new path into
+the services. Fetching client-side rather than server-side keeps its build hermetic — CI
+builds it with no backend running — and turns "the API is down" into a visible message
+instead of a broken page.
+
+Audit events carry the `turn_id` that produced them. That single column is what lets the
+trace say *this exchange did these things to the record*, using rows written at the point
+of access rather than a story reconstructed afterwards.
+
 Latency budget (perceived turn target **0.8–2.0 s**):
 
 | Stage | Target |

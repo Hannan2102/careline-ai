@@ -48,6 +48,7 @@ from app.utils.scheduling import (
     date_range,
     fits_within_working_hours,
     grid_starts,
+    in_date_range,
     intervals_overlap,
     slot_id_for,
     to_utc,
@@ -159,6 +160,39 @@ class MemoryFHIRProvider(EHRProvider):
             )
         ]
         return sorted(appointments, key=lambda a: a.start)
+
+    # ------------------------------------------------------ staff reads
+    async def list_patients(self, query: str | None = None, limit: int = 50) -> list[Patient]:
+        needle = (query or "").strip().lower()
+        patients = [patient_to_domain(r) for r in self.store.all_of("Patient")]
+        if needle:
+            patients = [p for p in patients if needle in p.full_name.lower()]
+        patients.sort(key=lambda p: (p.family_name.lower(), p.given_name.lower()))
+        return patients[:limit]
+
+    async def list_appointments(
+        self,
+        start_date: date,
+        end_date: date,
+        practitioner_ref: str | None = None,
+        statuses: tuple[AppointmentStatus, ...] = (AppointmentStatus.BOOKED,),
+        limit: int = 200,
+    ) -> list[Appointment]:
+        wanted = {s.value for s in statuses}
+        appointments = [
+            appointment_to_domain(resource)
+            for resource in self.store.all_of("Appointment")
+            if resource.get("status") in wanted
+        ]
+        return sorted(
+            (
+                a
+                for a in appointments
+                if in_date_range(a.start, start_date, end_date)
+                and (practitioner_ref is None or a.practitioner_ref == practitioner_ref)
+            ),
+            key=lambda a: a.start,
+        )[:limit]
 
     async def get_available_slots(
         self,

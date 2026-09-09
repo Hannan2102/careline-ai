@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     api_host: str = "0.0.0.0"
     api_port: int = 8000
+    #: Browser origins allowed to call this API. The admin dashboard runs on a
+    #: different port in development, so it needs to be named explicitly.
+    dashboard_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
     # --- Persistence -----------------------------------------------------
     database_url: str = "sqlite+aiosqlite:///./careline.db"

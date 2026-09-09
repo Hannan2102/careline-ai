@@ -6,7 +6,7 @@ PIP := uv pip install --python .venv/bin/python
 COMPOSE := docker compose
 
 .DEFAULT_GOAL := help
-.PHONY: help install up down logs reset seed wait-fhir dev test test-int lint fmt typecheck check budget clean
+.PHONY: help install up down logs reset seed wait-fhir dev chat dashboard dashboard-install dashboard-check test test-int lint fmt typecheck check budget clean
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -41,6 +41,18 @@ seed: ## Load synthetic data into the configured EHR
 
 dev: ## Run the backend API (http://localhost:8000/docs)
 	$(PY) -m uvicorn app.main:app --reload --app-dir backend --port 8000
+
+chat: ## Talk to the agent in the terminal (ARGS="--script refill --trace")
+	$(PY) scripts/text_chat.py $(ARGS)
+
+dashboard-install: ## Install dashboard dependencies
+	cd frontend && npm install
+
+dashboard: ## Run the admin dashboard (http://localhost:3000; needs 'make dev' too)
+	cd frontend && npm run dev
+
+dashboard-check: ## Lint, type-check, and build the dashboard
+	cd frontend && npm run lint && npm run typecheck && npm run build
 
 test: ## Run the test suite (no network, no cost)
 	AI_MODE=mock $(PY) -m pytest -m "not integration and not paid"

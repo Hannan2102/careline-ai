@@ -93,9 +93,30 @@ past $20 (optional paid calls blocked, mock providers substituted, text mode sti
 
 ---
 
+## Running these with the dashboard open
+
+```bash
+make up && make wait-fhir          # HAPI, so the CLI and the API share one record
+make dev          # terminal 1 — API on :8000
+make dashboard    # terminal 2 — dashboard on :3000
+make chat ARGS="--script demo3"
+```
+
+With `EHR_PROVIDER=memory` the calls, traces, and escalations still appear — those go
+through the shared database — but a booking will not, because the CLI and the API each
+hold their own in-process EHR.
+
+Then open **Calls**, click through to **Agent Trace**, and expand the refused turn: the
+safety category and the exact rule that fired, the escalation it created, the fact that
+the turn performed *no* record operations, and the per-stage latency. Demo 3 is the one
+worth showing this way — the trace is what makes "it refused safely" verifiable rather
+than a claim.
+
 ## Also worth showing
 
 - **Double booking** — two sessions race for one slot; exactly one wins.
 - **Malformed tool arguments** — invalid model output fails validation; no EHR mutation.
 - **Agent trace** — one turn expanded: transcript, intent, entities, workflow, safety
   decision, tool I/O, per-stage latency, estimated cost.
+- **The escalations queue** — Demo 3's handoff as staff would receive it: the patient's
+  own words, what the AI did and did not do, and a link back to the call.

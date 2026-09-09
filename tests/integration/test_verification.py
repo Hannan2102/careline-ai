@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
-from tests.conftest import JOHN_SMITH, JOHN_SMITH_DOB
+from tests.conftest import JOHN_SMITH, JOHN_SMITH_DOB, SEED_NOW
 
 from app.agents.state import SessionState
 from app.ehr.base import EHRProvider
@@ -308,7 +308,9 @@ class TestPhiOperationsThroughTheGate:
         patients = PatientService(ehr)
 
         async def upcoming() -> object:
-            return await scheduling.get_upcoming_appointments(require_verified_patient(session))
+            return await scheduling.get_upcoming_appointments(
+                require_verified_patient(session), now=SEED_NOW
+            )
 
         async def list_medications() -> object:
             return await medications.list_active(require_verified_patient(session))
@@ -341,6 +343,8 @@ class TestPhiOperationsThroughTheGate:
         await verification.verify_identity(session, "John Smith", JOHN_SMITH_DOB)
         patient_ref = require_verified_patient(session)
 
-        assert await SchedulingService(ehr).get_upcoming_appointments(patient_ref) != []
+        assert (
+            await SchedulingService(ehr).get_upcoming_appointments(patient_ref, now=SEED_NOW) != []
+        )
         assert await MedicationService(ehr).list_active(patient_ref) != []
         assert (await PatientService(ehr).get_patient(patient_ref)).family_name == "Smith"

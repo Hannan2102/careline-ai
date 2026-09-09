@@ -1,23 +1,51 @@
 # Frontend — admin dashboard
 
-**Not built yet.** This lands in **Phase 10** ([../ROADMAP.md](../ROADMAP.md)).
+Next.js (App Router) + TypeScript strict + Tailwind, talking to the FastAPI backend.
+This is the staff-facing view of what the agent did: **CareLine AI's operations console**,
+not a patient-facing product.
 
-The directory is a placeholder rather than a scaffold on purpose: an empty Next.js app
-that renders nothing would be dead code in the repository and noise in the git history.
+```bash
+npm install
+npm run dev        # http://localhost:3000
+```
 
-## Planned
-
-Next.js (App Router) + TypeScript strict + Tailwind, talking to the FastAPI backend at
-`NEXT_PUBLIC_API_BASE_URL`.
+It needs the backend running (`make dev` in the repository root). The API base URL comes
+from `NEXT_PUBLIC_API_BASE_URL`, defaulting to `http://localhost:8000`; copy
+`.env.example` to `.env.local` to change it.
 
 | Page | Shows |
 |---|---|
-| **Overview** | Calls today, appointments booked/changed, FAQs resolved, refill requests, escalations, average latency, resolution rate, estimated spend today and project-to-date, remaining budget |
-| **Calls** | Session id, synthetic patient, verification state, intent, transcript, workflow, outcome, duration, escalation state, estimated session cost |
-| **Agent Trace** | Per turn: transcript, detected intent, extracted entities, workflow, safety decision, each tool call with arguments and result, LLM response, and per-stage latency (STT, LLM, FHIR, TTS first audio, total) plus estimated turn cost |
-| **Patients** | Synthetic patient search — demographics, medications, appointments, conditions. Labelled unmistakably as synthetic |
-| **Appointments** | Calendar and list by provider, patient, type, status, duration |
-| **Escalations** | Clinical, failed-verification, patient-requested, system-uncertainty, administrative — with the structured handoff summaries |
+| **Overview** | Calls, turns, escalations and average latency over the last 24 hours; turns by intent; record operations counted from the audit trail; spend today, spend project-to-date, remaining budget, and the guard's status |
+| **Calls** | Every conversation: patient, verification state, last intent, workflow, turns, duration, estimated cost, and derived outcome |
+| **Agent Trace** | Per turn: transcript, safety decision and the rule that fired, intent and confidence, extracted entities, workflow and its state, every audit-logged record operation, per-stage latency, and estimated cost |
+| **Patients** | The synthetic roster and each chart the agent can read — demographics, medications with verbatim dosage text, appointments, conditions, allergies |
+| **Appointments** | The clinic schedule by day, filterable by provider and date range |
+| **Escalations** | Every handoff with its structured summary, plus the refill queue awaiting clinician review |
 
-Agent Trace is the page that matters: it exists to make the system debuggable, and it
-demos well as a consequence — not the other way round.
+## Two decisions worth knowing
+
+**Data is fetched in the browser, not on the server.** Every page is a client component
+calling the API through `useApi`. That keeps `next build` hermetic — CI builds the
+dashboard with no backend and no network — and it makes a backend that is down render as
+a visible error instead of a broken page. The dashboard is a live operations view of a
+local service; server rendering would buy caching it does not want.
+
+**The synthetic-data banner is part of the layout, not a page.** It is fixed to the top of
+every route with no way to dismiss it. A screenshot of this dashboard has to be
+unmistakable at a glance, and a footnote would not survive being cropped.
+
+## Read-only
+
+The dashboard reads. There is no "approve this refill" button and no "resolve this
+escalation" button, because there is no authentication to hang a staff action on. Those
+endpoints arrive with staff auth, not before — see [../SAFETY.md](../SAFETY.md).
+
+## Checks
+
+```bash
+npm run lint       # eslint, eslint-config-next
+npm run typecheck  # tsc --noEmit, strict + noUncheckedIndexedAccess
+npm run build      # next build
+```
+
+All three run in CI.

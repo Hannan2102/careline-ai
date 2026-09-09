@@ -126,7 +126,27 @@ full transcript.
 7. Every safety decision, tool call, and state mutation is audited.
 8. The system states plainly that it is an AI assistant when asked.
 
-## 6. Path to a regulated deployment
+## 6. The admin dashboard
+
+The dashboard (Phase 10) is a **staff-facing** view, and it sits outside the caller-facing
+verification model on purpose: staff see charts without a patient proving identity, which
+is exactly how a clinic works and exactly why it needs authentication that this project
+does not have.
+
+What that means concretely, stated rather than glossed:
+
+- The dashboard and its read APIs are **unauthenticated**, and are safe here only because
+  they are local-only and every record in them is invented.
+- Two reads on `EHRProvider` — `list_patients` and `list_appointments` — are not scoped to
+  a single patient. Nothing in the agent runtime calls them, and nothing in it may: a
+  caller-facing path that can list the roster defeats verification entirely.
+- The dashboard is **read-only**. There is no "approve this refill" and no "resolve this
+  escalation" button, because a staff action needs a staff identity to record against.
+  Authentication is the prerequisite for those buttons, not an enhancement to them.
+- The synthetic-data banner is part of the layout on every route and cannot be dismissed,
+  so a cropped screenshot still says what it is.
+
+## 7. Path to a regulated deployment
 
 Out of scope here, and listed so the gap is explicit rather than implied: a BAA with every
 processor; encryption at rest and in transit with managed keys; authenticated,

@@ -73,7 +73,7 @@ class PersistenceService:
             async with self.database.session() as db:
                 await upsert_session(db, session)
                 await insert_turn(db, trace)
-                await insert_audit_events(db, audit_events)
+                await insert_audit_events(db, audit_events, turn_id=trace.turn_id)
                 await insert_escalations(db, escalations)
                 await upsert_refill_requests(db, refills)
                 await insert_usage(db, usage)

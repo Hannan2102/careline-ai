@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+/* One dark, high-contrast console theme. The dashboard is an operations tool
+   that lives on a wall-mounted screen as readily as a laptop, so it commits to
+   a single look rather than tracking the viewer's colour scheme. */
+@theme {
+  --color-ink: #0b1020;
+  --color-panel: #121a2e;
+  --color-edge: #223052;
+  --color-muted: #8ea0c6;
+  --color-accent: #5eead4;
+  --color-warn: #fbbf24;
+  --color-danger: #fb7185;
+}
+
+body {
+  background-color: var(--color-ink);
+  color: #e6edf7;
+  font-feature-settings: "tnum" 1;
+}
