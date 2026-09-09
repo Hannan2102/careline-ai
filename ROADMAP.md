@@ -211,14 +211,20 @@ fourth implementation.
 
 ---
 
-### ⬜ Phase 13 — LiveKit browser voice
-Browser mic → Deepgram → agent → ElevenLabs → speaker.
+### 🟡 Phase 13 — Browser voice
+Browser mic → STT → agent → TTS → speaker.
 
 **Acceptance**
-- A full booking completes by voice in the browser
-- Barge-in, silence, and timeout handled by the turn manager
-- Voice changes no business logic
-- Session cost cap enforced live
+- [ ] A full booking completes by voice **in the browser** — needs a transport;
+      the decision between LiveKit and a plain WebSocket is open
+- [x] Barge-in, silence, and timeout handled by the turn manager
+- [x] Voice changes no business logic
+- [x] Session cost cap enforced live
+
+The turn manager and the voice session are complete and tested offline: a full booking
+runs end to end through scripted STT and counting TTS, with barge-in, queued finals,
+silence re-prompts, and the per-session cap all asserted. What is missing is only the
+audio transport between a browser and that session.
 
 ---
 

@@ -1,0 +1,349 @@
+"""Conversational timing (Phase 13).
+
+Everything voice adds over text is timing, and timing bugs are the ones that
+make a demo unwatchable: talking over the caller, cutting them off mid-date-of-
+birth, or booking twice because two turns raced.
+
+Time is injected throughout. Nothing here sleeps, so the whole file runs in
+milliseconds and can be run on every save.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import UTC, datetime, timedelta
+
+import pytest
+from tests.conftest import JOHN_SMITH_DOB
+
+from app.agents.factory import build_runtime
+from app.agents.orchestrator import Orchestrator
+from app.agents.state import SessionChannel, SessionState
+from app.ai.providers.base import Transcript
+from app.config.settings import Settings
+from app.ehr.base import EHRProvider
+from app.voice.models import CloseReason, VoiceState
+from app.voice.turn_manager import TurnManager
+
+T0 = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
+IDENTIFY = f"My name is John Smith and I was born {JOHN_SMITH_DOB:%d %B %Y}"
+
+
+def final(text: str) -> Transcript:
+    return Transcript(text=text, is_final=True, confidence=0.95, audio_seconds=1.2)
+
+
+def interim(text: str) -> Transcript:
+    return Transcript(text=text, is_final=False, confidence=0.4, audio_seconds=0.4)
+
+
+class Speaker:
+    """A speak function that records what was said and can be made slow.
+
+    ``block`` holds playback open so a test can interrupt it deterministically,
+    rather than racing a real audio stream.
+    """
+
+    def __init__(self) -> None:
+        self.said: list[str] = []
+        self.completed: list[str] = []
+        self.block: asyncio.Event | None = None
+
+    async def __call__(self, text: str) -> None:
+        self.said.append(text)
+        if self.block is not None:
+            await self.block.wait()
+        self.completed.append(text)
+
+
+@pytest.fixture
+def orchestrator(memory_ehr: EHRProvider) -> Orchestrator:
+    return build_runtime(
+        ehr=memory_ehr, settings=Settings(_env_file=None, app_env="test")
+    ).orchestrator
+
+
+@pytest.fixture
+def speaker() -> Speaker:
+    return Speaker()
+
+
+@pytest.fixture
+def manager(orchestrator: Orchestrator, speaker: Speaker) -> TurnManager:
+    session = SessionState(session_id="sess-voice", channel=SessionChannel.VOICE, created_at=T0)
+    turn_manager = TurnManager(session=session, orchestrator=orchestrator, speak=speaker)
+    turn_manager.start(now=T0)
+    return turn_manager
+
+
+async def say(manager: TurnManager, text: str, at: datetime) -> None:
+    """One complete utterance: the transcript, then the quiet that ends it."""
+    await manager.on_transcript(final(text), now=at)
+    await manager.tick(now=at + manager.timings.end_of_utterance)
+
+
+class TestEndOfUtterance:
+    async def test_a_final_transcript_is_not_acted_on_immediately(
+        self, manager: TurnManager, speaker: Speaker
+    ) -> None:
+        """Callers pause mid-sentence. Acting on the first final cuts them off."""
+        await manager.on_transcript(final("Are you open"), now=T0)
+        assert speaker.said == []
+        assert manager.stats.turns == 0
+
+    async def test_quiet_after_a_final_ends_the_turn(
+        self, manager: TurnManager, speaker: Speaker
+    ) -> None:
+        await say(manager, "Are you open on Saturday?", T0)
+        assert manager.stats.turns == 1
+        assert "closed on Saturday" in speaker.said[0]
+
+    async def test_two_finals_in_one_breath_become_one_utterance(
+        self, manager: TurnManager, speaker: Speaker
+    ) -> None:
+        """ "My name is John Smith" / "born 15 February 1985" is one answer."""
+        await manager.on_transcript(final("My name is John Smith and"), now=T0)
+        await manager.on_transcript(
+            final("I was born 15 February 1985"), now=T0 + timedelta(milliseconds=400)
+        )
+        await manager.tick(now=T0 + timedelta(milliseconds=1400))
+        assert manager.stats.turns == 1
+
+    async def test_interim_transcripts_never_reach_the_orchestrator(
+        self, manager: TurnManager, speaker: Speaker
+    ) -> None:
+        """An interim is a guess the recogniser is about to revise."""
+        await manager.on_transcript(interim("are you open on sat"), now=T0)
+        await manager.tick(now=T0 + timedelta(seconds=2))
+        assert manager.stats.turns == 0
+        assert manager.stats.discarded_interims == 1
+        assert speaker.said == []
+
+    async def test_an_empty_transcript_is_ignored(self, manager: TurnManager) -> None:
+        await manager.on_transcript(final("   "), now=T0)
+        await manager.tick(now=T0 + timedelta(seconds=2))
+        assert manager.stats.turns == 0
+
+
+class TestBargeIn:
+    async def test_speech_during_playback_cancels_it(
+        self, manager: TurnManager, speaker: Speaker
+    ) -> None:
+        speaker.block = asyncio.Event()
+        turn = asyncio.create_task(say(manager, "Are you open on Saturday?", T0))
+        await asyncio.sleep(0)  # let playback start
+        while not speaker.said:
+            await asyncio.sleep(0)
+
+        await manager.on_transcript(interim("actually"), now=T0 + timedelta(seconds=1))
+        await turn
+
+        assert manager.stats.barge_ins == 1
+        assert speaker.said, "the agent started speaking"
+        assert speaker.completed == [], "and was cut off before finishing"
+
+    async def test_an_interim_is_enough_to_interrupt(
+        self, manager: TurnManager, speaker: Speaker
+    ) -> None:
+        """Waiting for a final would mean talking over the caller's first phrase."""
+        speaker.block = asyncio.Event()
+        turn = asyncio.create_task(say(manager, "Are you open on Saturday?", T0))
+        while not speaker.said:
+            await asyncio.sleep(0)
+
+        await manager.on_transcript(interim("wait"), now=T0 + timedelta(seconds=1))
+        await turn
+        assert manager.stats.barge_ins == 1
+
+    async def test_a_cough_does_not_interrupt(self, manager: TurnManager, speaker: Speaker) -> None:
+        """Sub-threshold noise is not an interruption."""
+        speaker.block = asyncio.Event()
+        turn = asyncio.create_task(say(manager, "Are you open on Saturday?", T0))
+        while not speaker.said:
+            await asyncio.sleep(0)
+
+        await manager.on_transcript(interim("a"), now=T0 + timedelta(seconds=1))
+        assert manager.stats.barge_ins == 0
+        speaker.block.set()
+        await turn
+
+    async def test_the_state_returns_to_listening_after_an_interruption(
+        self, manager: TurnManager, speaker: Speaker
+    ) -> None:
+        speaker.block = asyncio.Event()
+        turn = asyncio.create_task(say(manager, "Are you open on Saturday?", T0))
+        while not speaker.said:
+            await asyncio.sleep(0)
+        await manager.on_transcript(interim("actually"), now=T0 + timedelta(seconds=1))
+        await turn
+        assert manager.state is VoiceState.LISTENING
+
+
+class TestSilence:
+    async def test_silence_prompts_once(self, manager: TurnManager, speaker: Speaker) -> None:
+        await manager.tick(now=T0 + timedelta(seconds=9))
+        assert speaker.said == ["Are you still there?"]
+        assert manager.stats.silence_prompts == 1
+
+    async def test_the_prompt_is_not_repeated(self, manager: TurnManager, speaker: Speaker) -> None:
+        await manager.tick(now=T0 + timedelta(seconds=9))
+        await manager.tick(now=T0 + timedelta(seconds=12))
+        assert manager.stats.silence_prompts == 1
+
+    async def test_continued_silence_closes_the_call(
+        self, manager: TurnManager, speaker: Speaker
+    ) -> None:
+        await manager.tick(now=T0 + timedelta(seconds=9))
+        await manager.tick(now=T0 + timedelta(seconds=20))
+        assert manager.state is VoiceState.CLOSED
+        assert manager.close_reason is CloseReason.SILENCE
+        assert "call back" in speaker.said[-1]
+
+    async def test_speaking_resets_the_silence_timer(
+        self, manager: TurnManager, speaker: Speaker
+    ) -> None:
+        await manager.tick(now=T0 + timedelta(seconds=9))
+        await say(manager, "Sorry, I'm here. Where are you located?", T0 + timedelta(seconds=10))
+        await manager.tick(now=T0 + timedelta(seconds=15))
+        assert manager.state is not VoiceState.CLOSED
+
+    async def test_a_closed_call_ignores_everything_after(
+        self, manager: TurnManager, speaker: Speaker
+    ) -> None:
+        await manager.close(CloseReason.CALLER_HUNG_UP)
+        spoken = len(speaker.said)
+        await say(manager, "Are you open on Saturday?", T0 + timedelta(seconds=1))
+        assert manager.stats.turns == 0
+        assert len(speaker.said) == spoken
+
+
+class TestTimeout:
+    async def test_a_call_has_a_hard_limit(self, manager: TurnManager, speaker: Speaker) -> None:
+        await manager.tick(now=T0 + timedelta(minutes=11))
+        assert manager.state is VoiceState.CLOSED
+        assert manager.close_reason is CloseReason.TIMEOUT
+        assert "time limit" in speaker.said[-1]
+
+    async def test_closing_is_idempotent(self, manager: TurnManager) -> None:
+        closes: list[CloseReason] = []
+        manager.on_close = closes.append.__call__  # type: ignore[assignment]
+
+        async def record(reason: CloseReason) -> None:
+            closes.append(reason)
+
+        manager.on_close = record
+        await manager.close(CloseReason.COMPLETED)
+        await manager.close(CloseReason.SILENCE)
+        assert closes == [CloseReason.COMPLETED]
+
+
+class SlowOrchestrator:
+    """An orchestrator that can be held mid-turn.
+
+    Queuing happens while the agent is *thinking* -- waiting on the EHR, say --
+    not while it is speaking: speech during playback is a barge-in, which
+    cancels playback and frees the turn immediately. Blocking the speaker
+    therefore cannot exercise this path, and a test that tried would hang.
+    """
+
+    def __init__(self) -> None:
+        self.release = asyncio.Event()
+        self.utterances: list[str] = []
+
+    async def handle_turn(
+        self, session: SessionState, utterance: str, now: datetime | None = None
+    ) -> object:
+        self.utterances.append(utterance)
+        await self.release.wait()
+
+        class _Result:
+            message = "All right."
+
+        return _Result()
+
+
+class TestOneTurnAtATime:
+    @pytest.fixture
+    def slow(self, speaker: Speaker) -> tuple[TurnManager, SlowOrchestrator]:
+        thinking = SlowOrchestrator()
+        session = SessionState(session_id="sess-voice", channel=SessionChannel.VOICE, created_at=T0)
+        manager = TurnManager(
+            session=session,
+            orchestrator=thinking,  # type: ignore[arg-type]
+            speak=speaker,
+        )
+        manager.start(now=T0)
+        return manager, thinking
+
+    async def test_a_final_arriving_mid_turn_is_queued_not_raced(
+        self, slow: tuple[TurnManager, SlowOrchestrator]
+    ) -> None:
+        """Two concurrent turns on one session is how a caller gets booked twice."""
+        manager, thinking = slow
+        first = asyncio.create_task(say(manager, "Are you open on Saturday?", T0))
+        while not thinking.utterances:
+            await asyncio.sleep(0)
+
+        at = T0 + timedelta(seconds=2)
+        await manager.on_transcript(final("Where are you located?"), now=at)
+        await manager.tick(now=at + manager.timings.end_of_utterance)
+
+        assert manager.stats.queued_finals == 1
+        assert thinking.utterances == ["Are you open on Saturday?"]
+
+        thinking.release.set()
+        await first
+
+    async def test_a_queued_utterance_runs_afterwards(
+        self, slow: tuple[TurnManager, SlowOrchestrator]
+    ) -> None:
+        manager, thinking = slow
+        first = asyncio.create_task(say(manager, "Are you open on Saturday?", T0))
+        while not thinking.utterances:
+            await asyncio.sleep(0)
+
+        at = T0 + timedelta(seconds=2)
+        await manager.on_transcript(final("Where are you located?"), now=at)
+        await manager.tick(now=at + manager.timings.end_of_utterance)
+        thinking.release.set()
+        await first
+
+        await manager.tick(now=at + timedelta(seconds=3))
+        assert thinking.utterances == ["Are you open on Saturday?", "Where are you located?"]
+        assert manager.stats.turns == 2
+
+
+class TestVoiceChangesNoBusinessLogic:
+    """The acceptance criterion that matters most (ADR 005)."""
+
+    async def test_a_booking_completes_by_voice(
+        self, manager: TurnManager, speaker: Speaker
+    ) -> None:
+        script = [
+            "Hi, I'd like to schedule a diabetes follow-up with Dr. Patel next week",
+            IDENTIFY,
+            "The first one please",
+            "Yes",
+        ]
+        moment = T0
+        for utterance in script:
+            await say(manager, utterance, moment)
+            moment += timedelta(seconds=5)
+
+        assert manager.stats.turns == 4
+        assert manager.session.is_verified
+        assert "booked" in speaker.said[-1].lower()
+
+    async def test_a_clinical_question_is_refused_by_voice_too(
+        self, manager: TurnManager, speaker: Speaker
+    ) -> None:
+        await say(manager, "Can I double the dose of my lisinopril?", T0)
+        spoken = speaker.said[0].lower()
+        assert "nurse" in spoken or "clinical" in spoken
+        assert "double" not in spoken
+
+    async def test_the_turn_manager_holds_no_clinical_state(self, manager: TurnManager) -> None:
+        """Its attributes are timing and transport, never the record."""
+        held = {k for k, v in vars(manager).items() if isinstance(v, str | list)}
+        assert "patient_ref" not in held
+        assert not any("medication" in name for name in held)

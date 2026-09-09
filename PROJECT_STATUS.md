@@ -4,7 +4,7 @@
 
 ## Current phase
 
-**Phases 0–12 complete.** The agent works end to end in text, what it does survives a restart, the dashboard makes every turn inspectable, and it can now reach a real model — verified live against Groq on 2026-09-09. Total spend to date: **$0.00**. Next: Phase 13 (LiveKit browser voice).
+**Phases 0–12 complete; Phase 13 part-built.** The agent works end to end in text, what it does survives a restart, the dashboard makes every turn inspectable, and it can now reach a real model — verified live against Groq on 2026-09-09. Total spend to date: **$0.00**. The voice turn manager and session are built and tested offline — a full booking completes by voice with no audio hardware — and what remains of Phase 13 is the browser audio transport.
 
 ## Completed
 
@@ -151,6 +151,15 @@
   fabricated `full_name: "John Doe", date_of_birth: "1990-05-15"`, which is why the
   measurement was worth taking before trusting a model with verification inputs.
 
+**Phase 13 — Browser voice** 🟡
+- `TurnManager`: end-of-utterance detection, barge-in, silence re-prompt then graceful
+  close, hard call limit, interim transcripts never acted on, and one in-flight turn per
+  session with late finals queued rather than raced
+- `VoiceSession`: STT stream in, TTS out, transport-agnostic, with the per-session
+  spending cap enforced *during* the call — the caller is offered a human, not hung up on
+- Time is injected into the manager, so 21 timing tests run in a third of a second
+- **Not done:** the audio transport. LiveKit versus a plain WebSocket is an open choice.
+
 ## What actually works — and how I know
 
 | Capability | Verified by |
@@ -237,6 +246,12 @@
 | A patient id for someone else is refused, indistinguishably | `test_the_refusal_does_not_say_whether_the_patient_exists` |
 | The repair loop is bounded, per proposal | `TestRepair` |
 | Groq's rejection of `messages[].name` is handled, not discovered | `TestGroqCompatibility` |
+| A full booking completes by voice, with no audio hardware | `test_a_booking_completes_by_voice` |
+| Speech during playback cancels it; a cough does not | `TestBargeIn` |
+| Interim transcripts never reach the orchestrator | `test_interim_transcripts_never_reach_the_orchestrator` |
+| A final arriving mid-turn is queued, never raced | `TestOneTurnAtATime` |
+| Silence re-prompts once, then closes gracefully | `TestSilence` |
+| The per-session cost cap ends a call in progress | `TestLiveCostCap` |
 | `reasoning_effort` is sent to models that have it and no others | `test_reasoning_effort_is_absent_for_a_model_without_it` |
 | A rate limit degrades to the deterministic path instead of ending a call | `TestDegradingOnProviderFailure` |
 | A free provider is never blocked by a full budget ceiling | `test_a_full_ceiling_does_not_block_a_free_provider` |
