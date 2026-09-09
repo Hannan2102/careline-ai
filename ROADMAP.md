@@ -37,13 +37,18 @@ foundation is usable and testable on any machine.
 
 ---
 
-### ⬜ Phase 2 — FHIR service layer
+### ✅ Phase 2 — FHIR service layer
 Domain services over the EHR interface: patients, scheduling, medications.
 
 **Acceptance**
-- Services expose domain models only; no FHIR types escape the adapter
-- Slot/appointment/medication reads and writes covered by integration tests against both
-  providers, with identical assertions
+- [x] Services expose domain models only; no FHIR types escape the adapter
+- [x] Slot/appointment/medication reads and writes covered by integration tests against both
+      providers, with identical assertions — one contract suite, parametrised over
+      `MemoryFHIRProvider` and live HAPI (64 + 64 assertions)
+- [x] Appointment ownership enforced in the service layer, so no caller can change a
+      stranger's appointment by guessing an id
+- [x] Medication lookup distinguishes found / not-found / ambiguous / no-dosage-on-file
+- [x] Verbatim-dosage guard rejects any rendering that alters the stored instruction
 
 ---
 

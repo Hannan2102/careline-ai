@@ -21,8 +21,11 @@ os.environ.setdefault("APP_ENV", "test")
 from app.ai.budget_guard import BudgetGuard
 from app.ai.usage import UsageLedger
 from app.config.settings import Settings
+from app.ehr.base import EHRProvider
+from app.ehr.local_fhir import LocalFHIRProvider
 from app.ehr.memory_fhir import InMemoryFhirStore, MemoryFHIRProvider
-from app.ehr.seeding import seed_memory_store
+from app.ehr.seeding import reset_fhir_server, seed_memory_store
+from app.fhir.client import FhirClient
 
 #: Fixed reference date so slot arithmetic is deterministic. A Tuesday.
 SEED_TODAY = date(2026, 9, 8)
@@ -59,10 +62,42 @@ async def seeded_store(store: InMemoryFhirStore) -> AsyncIterator[InMemoryFhirSt
 
 
 @pytest.fixture
-async def ehr(seeded_store: InMemoryFhirStore) -> AsyncIterator[MemoryFHIRProvider]:
+async def memory_ehr(seeded_store: InMemoryFhirStore) -> AsyncIterator[MemoryFHIRProvider]:
     provider = MemoryFHIRProvider(store=seeded_store)
     yield provider
     await provider.aclose()
+
+
+@pytest.fixture(
+    params=[
+        pytest.param("memory", id="memory"),
+        # The HAPI run carries the marker, so `-m "not integration"` keeps the
+        # default suite offline while `make test-int` exercises the real server.
+        pytest.param("hapi", id="hapi", marks=pytest.mark.integration),
+    ]
+)
+async def ehr(request: pytest.FixtureRequest) -> AsyncIterator[EHRProvider]:
+    """An EHRProvider, seeded identically, once per implementation.
+
+    Every contract assertion runs against both, which is the only thing that
+    actually proves the in-memory provider has not drifted from HAPI (ADR 001).
+    """
+    if request.param == "memory":
+        store = InMemoryFhirStore()
+        await seed_memory_store(store, today=SEED_TODAY)
+        provider: EHRProvider = MemoryFHIRProvider(store=store)
+        yield provider
+        await provider.aclose()
+        return
+
+    settings = Settings(_env_file=None, app_env="test")
+    client = FhirClient(settings.fhir_base_url, timeout=settings.fhir_timeout_seconds)
+    if not await client.ping():
+        await client.aclose()
+        pytest.skip(f"no FHIR server at {settings.fhir_base_url}")
+    await reset_fhir_server(client, today=SEED_TODAY)
+    yield LocalFHIRProvider(client)
+    await client.aclose()
 
 
 @pytest.fixture

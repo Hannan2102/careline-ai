@@ -11,6 +11,7 @@ Constructing a dosage is a clinical act (SAFETY.md).
 
 from __future__ import annotations
 
+import uuid
 from datetime import date, datetime
 
 from app.config.clinic import CLINIC_LOCATION, PRACTITIONERS_BY_REF
@@ -30,6 +31,16 @@ from app.schemas.domain import (
 from app.utils.scheduling import to_utc
 
 APPOINTMENT_TYPE_SYSTEM = "http://oakwood.example/appointment-type"
+
+#: Marks records created at runtime (new-patient registration, tests) as
+#: distinct from the curated seed. Everything in this project is synthetic;
+#: this identifies the subset a demo reset should clear.
+SYNTHETIC_IDENTIFIER_SYSTEM = "http://oakwood.example/synthetic-record"
+RUNTIME_GENERATED = "runtime-generated"
+
+#: Id prefix for patients created at runtime. Both providers use it, and a
+#: demo reset uses it to tell registered patients from the curated seed.
+RUNTIME_PATIENT_ID_PREFIX = "syn-"
 
 
 def _parse_datetime(value: str | None, *, field: str) -> datetime:
@@ -218,11 +229,23 @@ def allergy_to_domain(resource: FhirResource) -> Allergy:
 # --------------------------------------------------------------------------
 
 
+def new_patient_reference(given_name: str, family_name: str) -> str:
+    """Reference for a newly registered synthetic patient."""
+    slug = f"{given_name}-{family_name}".lower().replace(" ", "-")
+    return f"Patient/{RUNTIME_PATIENT_ID_PREFIX}{slug}-{uuid.uuid4().hex[:8]}"
+
+
+def is_runtime_patient(resource_id: str) -> bool:
+    """Whether a Patient id belongs to a runtime-created record."""
+    return resource_id.startswith(RUNTIME_PATIENT_ID_PREFIX)
+
+
 def patient_to_fhir(patient: Patient) -> FhirResource:
     resource: FhirResource = {
         "resourceType": "Patient",
         "id": patient.reference.rsplit("/", 1)[-1],
         "active": True,
+        "identifier": [{"system": SYNTHETIC_IDENTIFIER_SYSTEM, "value": RUNTIME_GENERATED}],
         "name": [
             {
                 "use": "official",

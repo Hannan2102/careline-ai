@@ -141,6 +141,24 @@ class FhirClient:
         )
         return dict(response.json()) if response.content else resource
 
+    async def delete(self, resource_type: str, resource_id: str) -> None:
+        """Delete one resource. A missing resource is not an error."""
+        try:
+            await self._request("DELETE", f"/{resource_type}/{resource_id}")
+        except EHRNotFoundError:
+            return
+
+    async def delete_matching(self, resource_type: str, params: dict[str, Any]) -> None:
+        """Conditional delete of every match.
+
+        Requires the server to permit multiple delete (enabled in
+        infra/hapi/application.yaml). Used to reset demo state between runs.
+        """
+        try:
+            await self._request("DELETE", f"/{resource_type}", params=params)
+        except EHRNotFoundError:
+            return
+
     async def transaction(self, bundle: FhirBundle) -> FhirBundle:
         """Submit a transaction bundle to the server root."""
         response = await self._request("POST", "/", json=bundle)

@@ -18,6 +18,7 @@ from app.ehr.base import EHRConflictError, EHRNotFoundError
 from app.ehr.local_fhir import LocalFHIRProvider, build_seed_bundles
 from app.ehr.memory_fhir import InMemoryFhirStore, MemoryFHIRProvider, build_slot_resources
 from app.fhir.client import FhirClient
+from app.fhir.mappings import is_runtime_patient
 from app.fhir.models import FhirResource
 from app.schemas.domain import AppointmentType
 from app.utils.scheduling import is_working_day
@@ -143,6 +144,29 @@ async def seed_fhir_server(
     summary["_bundles_sent"] = len(bundles)
     summary["_demo_appointments_booked"] = booked
     return summary
+
+
+async def reset_fhir_server(
+    client: FhirClient,
+    days_ahead: int = DEFAULT_DAYS_AHEAD,
+    today: date | None = None,
+) -> dict[str, int]:
+    """Return a FHIR server to the freshly-seeded state.
+
+    Removes appointments left by earlier runs, then reseeds -- which rewrites
+    every Slot back to ``free``. Cheaper and less disruptive than destroying the
+    database volume, and it makes demos and integration tests reproducible.
+    """
+    # Appointments first: a Patient cannot be removed while referenced.
+    await client.delete_matching("Appointment", {"status": "booked,cancelled,fulfilled,noshow"})
+    # Then patients registered at runtime, so a previous run's "new patient"
+    # does not linger and turn a later lookup into a duplicate match. Selected
+    # by id prefix rather than by identifier, so records written before the
+    # identifier existed are cleaned up too.
+    for resource in await client.search("Patient", {"_count": "500"}):
+        if is_runtime_patient(str(resource["id"])):
+            await client.delete("Patient", str(resource["id"]))
+    return await seed_fhir_server(client, days_ahead=days_ahead, today=today)
 
 
 def dataset_report(days_ahead: int = DEFAULT_DAYS_AHEAD, today: date | None = None) -> str:

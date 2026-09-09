@@ -29,6 +29,7 @@ from app.fhir.mappings import (
     appointment_to_fhir,
     condition_to_domain,
     medication_request_to_domain,
+    new_patient_reference,
     patient_to_domain,
     patient_to_fhir,
 )
@@ -101,9 +102,8 @@ class LocalFHIRProvider(EHRProvider):
         email: str | None = None,
         postal_code: str | None = None,
     ) -> Patient:
-        slug = f"{given_name}-{family_name}".lower().replace(" ", "-")
         draft = Patient(
-            reference=f"Patient/syn-{slug}-{uuid.uuid4().hex[:8]}",
+            reference=new_patient_reference(given_name, family_name),
             given_name=given_name,
             family_name=family_name,
             date_of_birth=date_of_birth,

@@ -4,7 +4,7 @@
 
 ## Current phase
 
-**Phase 1 complete.** Next: Phase 2 (domain services).
+**Phase 2 complete.** Next: Phase 3 (patient verification).
 
 ## Completed
 
@@ -30,10 +30,27 @@
 - Structured logging with credential redaction and trace correlation
 - **Verified end to end against a running HAPI FHIR 4.0.1 server**
 
+**Phase 2 — FHIR service layer** ✅
+- `PatientService` — lookup and registration, with input validation; returns
+  candidates without interpreting what a match count means (that is Phase 3)
+- `SchedulingService` — reason→type classification, varied slot offers, booking,
+  cancellation, rescheduling, and **appointment ownership enforcement**
+- `MedicationService` — four distinct lookup outcomes and a verbatim-dosage guard
+- One contract suite now runs against **both** EHR providers from a single body of
+  test code, which is what actually proves they have not diverged
+
 ## What actually works — and how I know
 
 | Capability | Verified by |
 |---|---|
+| Every EHR assertion holds on **both** providers | `tests/integration/test_ehr_contract.py` (32 × 2) |
+| Every service rule holds on **both** providers | `tests/integration/test_services.py` (32 × 2) |
+| A patient cannot cancel or move another's appointment | `TestAppointmentOwnership` |
+| A refused change leaves the owner's booking intact | `test_a_refused_cancellation_leaves_the_appointment_booked` |
+| Medication lookup separates not-found from ambiguous from no-dosage | `TestMedicationService` |
+| Altered dosage wording is rejected by the verbatim guard | `test_the_verbatim_guard_rejects_altered_wording` |
+| Reason → appointment type, with a flagged fallback | `tests/unit/test_appointment_classification.py` |
+| HAPI's own optimistic locking refuses a stale write | `tests/integration/test_hapi_server.py` |
 | Patient search: exact, unknown, ambiguous, wrong DOB | `tests/integration/test_memory_ehr_provider.py::TestPatientSearch` |
 | Booking with type-driven duration and slot consumption | `TestBooking` |
 | Double-booking refused; 5 concurrent bookings → exactly 1 winner | `test_concurrent_booking_of_one_slot_has_exactly_one_winner` |
@@ -52,8 +69,8 @@
 ## Last test results
 
 ```
-111 passed (offline suite)            0.6s
-  6 passed (HAPI integration suite)   6.3s
+234 passed in 45.6s   (full suite, both EHR providers)
+166 passed in  1.0s   (offline suite: -m "not integration")
 ```
 
 - The HAPI suite runs against a live FHIR 4.0.1 server via `make test-int`; it skips
@@ -64,11 +81,14 @@
 
 ## Known problems and gaps
 
-1. **`MemoryFHIRProvider` could still drift from HAPI.** Both now pass mirrored
-   assertions, but the HAPI suite covers six scenarios against the in-memory provider's
-   thirty. Widening the shared contract is worthwhile before Phase 4 leans on scheduling.
-2. **Integration tests reseed HAPI per test.** Fast enough today (6.3 s for six tests)
-   because seeding is an idempotent upsert, but it will not scale as the suite grows.
+1. **Integration tests reset HAPI per test.** 64 HAPI tests take ~40 s. Acceptable now;
+   a session-scoped baseline with per-test cleanup would scale better.
+2. **The offline suite slows dramatically under memory pressure.** With HAPI's JVM
+   resident on a 8 GB machine it went from 1.0 s to 117 s while the system swapped. Worth
+   knowing before blaming the tests; `make down` when not using the FHIR server.
+3. **Ownership is checked against *booked* appointments only.** Cancelling an already
+   cancelled appointment reports "not owned" rather than "already cancelled". Correct and
+   safe, but the workflow will want the clearer message in Phase 5.
 3. **The 15-minute slot grid rounds durations up.** A 20-minute visit occupies 30 minutes of
    grid. Documented in `docs/fhir-data-model.md`; a real template model would fix it.
 4. **No application database yet.** `session`, `turn`, `audit_event`, `escalation`,
@@ -81,10 +101,10 @@
 
 ## Next tasks
 
-1. **Phase 2** — domain services (`patient_service`, `scheduling_service`,
-   `medication_service`) over the EHR interface.
-2. **Phase 3** — verification service and session state.
-3. **Phase 8 before Phase 9** — safety policies land before the agent can talk, so there is
+1. **Phase 3** — verification service and session state. `PatientService` deliberately
+   returns candidates without deciding what a match count means; that decision is
+   Phase 3's, and it is the gate everything else depends on.
+2. **Phase 8 before Phase 9** — safety policies land before the agent can talk, so there is
    never a build in which the agent answers a clinical question.
 
 ## Architecture decisions
