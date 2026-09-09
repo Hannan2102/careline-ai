@@ -308,7 +308,17 @@ Try it: `python scripts/text_chat.py --script demo1 --trace`
    (`EHR_PROVIDER=local`) shares the record and behaves as expected; this is verified
    both ways. It is the in-process provider's nature, not a defect, but it is a
    sharp edge in a demo and the docs now say so.
-14. **`EHRProvider` now has two reads not scoped to one patient** — `list_patients` and
+14. **A broken CA trust store, resolved.** Early in the project every HTTPS-capable
+   client failed at construction with `X509: NO_CERTIFICATE_OR_CRL_FOUND`, including
+   plain-HTTP calls to the local HAPI server — httpx builds an SSL context regardless of
+   scheme. `uses_tls()` in `app/fhir/client.py` fixed the symptom by not loading a trust
+   store for `http://`, and that remains correct on its own merits. The cause was almost
+   certainly the venv living in an iCloud-synced folder: `certifi/cacert.pem` had been
+   evicted to a cloud stub, so Python read an empty CA file. After moving the project off
+   the Desktop and rebuilding the venv, `ssl.create_default_context()` loads 128 CA
+   certificates and a verified TLS handshake to `api.openai.com` succeeds. Worth knowing
+   because it is invisible: an evicted file has the right name, path, and permissions.
+15. **`EHRProvider` now has two reads not scoped to one patient** — `list_patients` and
    `list_appointments`, for the dashboard. Nothing in the agent runtime calls them, and a
    caller-facing path that could would defeat verification entirely. That constraint is
    currently a comment on the interface and a code review, not something enforced.
