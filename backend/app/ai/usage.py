@@ -44,7 +44,13 @@ RATES: dict[tuple[str, str], Decimal] = {
 
 #: Free providers still record usage, so the metering path is exercised by the
 #: test suite rather than only in production.
-FREE_PROVIDERS: frozenset[str] = frozenset({"mock", "ollama", "whisper", "piper"})
+#:
+#: ``groq`` is here because its developer tier is rate-limited rather than
+#: metered: tokens are counted, priced at zero, and the request budget that
+#: actually binds is enforced by the vendor. Moving a Groq account to a paid
+#: tier means moving it out of this set and into RATES, or the ledger will
+#: under-report (COSTS.md).
+FREE_PROVIDERS: frozenset[str] = frozenset({"mock", "groq", "ollama", "whisper", "piper"})
 
 
 def price(provider: str, metric: str, quantity: Decimal | int | float) -> Decimal:

@@ -11,13 +11,20 @@ from decimal import Decimal
 
 import pytest
 
-from app.ai.providers.base import ChatMessage, LLMRequest, VoiceSpec
+from app.ai.budget_guard import BudgetGuard
+from app.ai.providers.base import (
+    ChatMessage,
+    LLMRequest,
+    ProviderUnavailableError,
+    VoiceSpec,
+)
 from app.ai.providers.factory import (
     GuardedLLMProvider,
     build_llm_provider,
     build_stt_provider,
     build_tts_provider,
 )
+from app.ai.providers.llm.mock import MockLLMProvider
 from app.ai.usage import OUTPUT_TOKENS, UsageLedger
 from app.config.settings import Settings
 
@@ -163,3 +170,80 @@ def test_paid_providers_are_named_in_the_settings_allowlist(provider: str) -> No
     from app.config.settings import PAID_PROVIDERS
 
     assert provider in PAID_PROVIDERS
+
+
+class TestGroq:
+    """Groq's free tier: rate-limited rather than metered."""
+
+    def test_selecting_groq_with_a_key_builds_it(self) -> None:
+        provider = build_llm_provider(
+            settings_for(ai_mode="cloud", llm_provider="groq", groq_api_key="gsk-real"),
+            UsageLedger(),
+        )
+        assert provider.name == "groq"
+
+    def test_groq_is_not_treated_as_a_spending_provider(self) -> None:
+        """It is free, so `can_spend_money` must stay false and the ceiling irrelevant."""
+        settings = settings_for(ai_mode="cloud", llm_provider="groq", groq_api_key="gsk-real")
+        assert settings.can_spend_money is False
+
+    def test_a_full_ceiling_does_not_block_a_free_provider(self) -> None:
+        """The fallback must always be reachable, and so must a free provider."""
+        ledger = UsageLedger(baseline_usd=Decimal("20"))
+        provider = build_llm_provider(
+            settings_for(ai_mode="cloud", llm_provider="groq", groq_api_key="gsk-real"), ledger
+        )
+        assert isinstance(provider, GuardedLLMProvider)
+        assert provider._choose("sess-1").name == "groq"
+
+    def test_mock_mode_still_wins(self) -> None:
+        provider = build_llm_provider(
+            settings_for(ai_mode="mock", llm_provider="groq", groq_api_key="gsk-real"),
+            UsageLedger(),
+        )
+        assert provider.name == "mock"
+
+    def test_groq_without_a_key_falls_back_rather_than_crashing(self) -> None:
+        provider = build_llm_provider(
+            settings_for(ai_mode="cloud", llm_provider="mock"), UsageLedger()
+        )
+        assert provider.name == "mock"
+
+
+class TestDegradingOnProviderFailure:
+    """A rate limit or an outage must not end a call."""
+
+    class Failing:
+        name = "groq"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def generate(self, request: LLMRequest) -> object:
+            self.calls += 1
+            raise ProviderUnavailableError("groq rate limit reached (429)")
+
+        async def tool_call(self, request: object) -> object:
+            raise ProviderUnavailableError("groq rate limit reached (429)")
+
+    async def test_a_provider_failure_falls_back_to_the_deterministic_path(self) -> None:
+        failing = self.Failing()
+        mock = MockLLMProvider()
+        guarded = GuardedLLMProvider(
+            failing,  # type: ignore[arg-type]
+            mock,
+            BudgetGuard(settings_for(), UsageLedger()),
+        )
+        response = await guarded.generate(ASK)
+        assert response.text == "hello"
+        assert failing.calls == 1
+
+    async def test_a_failing_fallback_raises_rather_than_looping(self) -> None:
+        failing = self.Failing()
+        guarded = GuardedLLMProvider(
+            failing,  # type: ignore[arg-type]
+            failing,  # type: ignore[arg-type]
+            BudgetGuard(settings_for(), UsageLedger()),
+        )
+        with pytest.raises(ProviderUnavailableError):
+            await guarded.generate(ASK)

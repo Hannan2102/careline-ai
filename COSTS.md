@@ -122,6 +122,26 @@ set in CI, and using it is a conscious act.
 The guard is a service consulted by the provider factory — not a decorator sprinkled on
 call sites — so a new provider cannot forget to check it.
 
+## Free inference
+
+`LLM_PROVIDER=groq` uses Groq's developer tier, which is **rate-limited rather than
+metered**: no card, no per-token charge, and roughly 30 requests per minute. It is in
+`FREE_PROVIDERS`, so tokens are still counted and priced at zero — the metering path stays
+exercised, and the ledger stays honest about what was consumed.
+
+Two consequences worth stating:
+
+- The budget guard will not block it, because there is nothing to block. What binds is the
+  vendor's rate limit, which surfaces as a 429 and degrades to the deterministic path
+  rather than ending a call.
+- **Moving a Groq account to a paid tier means moving `groq` out of `FREE_PROVIDERS` and
+  into `RATES`.** Otherwise the ledger silently under-reports and the $20 ceiling stops
+  meaning $20.
+
+Measured against the alternative: at demo volume the LLM is ~8% of a voice turn's cost,
+and $7 of OpenAI budget buys ~12,500 text turns. Groq's advantage here is latency and not
+needing a card, not the money.
+
 ## Live smoke tests
 
 The adapters are tested against faked transports, which proves the adapter's own logic but
@@ -129,11 +149,13 @@ not that the vendor agrees with it. One live call per provider closes that gap, 
 the only way to spend money in this repository:
 
 ```bash
+make smoke-cloud PROVIDER=groq        # requires GROQ_API_KEY (free tier)
 make smoke-cloud PROVIDER=openai      # requires OPENAI_API_KEY
 ```
 
 It refuses unless the provider is named explicitly, `--confirm-spend` is passed, a key is
-configured, and the budget guard allows it. Afterwards it prints the metered cost of that
+configured, and the budget guard allows it. The flag is required even for a free tier: it
+means "I intend to contact a vendor", which is the decision worth being deliberate about. Afterwards it prints the metered cost of that
 single call and persists the usage, so the next run counts it against the ceiling.
 
 Budgeted at **under $0.25 for the whole exercise** (ROADMAP Phase 12). The prompt is

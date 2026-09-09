@@ -24,13 +24,20 @@ class TTSProvider(Protocol):
 | Kind | Cloud | Local (Phase 17) | Deterministic |
 |---|---|---|---|
 | STT | `DeepgramSTTProvider` ✅ | `WhisperSTTProvider` | `MockSTTProvider` ✅ |
-| LLM | `OpenAILLMProvider` ✅ | `OllamaLLMProvider` | `MockLLMProvider` ✅ |
+| LLM | `OpenAILLMProvider` ✅ (OpenAI **and** Groq) | `OllamaLLMProvider` | `MockLLMProvider` ✅ |
 | TTS | `ElevenLabsTTSProvider` ✅ | `PiperTTSProvider` | `MockTTSProvider` ✅ |
 
 The cloud adapters talk to their vendors over `httpx` (and `websockets` for Deepgram
 streaming) rather than through vendor SDKs. The surface used is a handful of endpoints
 with a stable JSON shape; an SDK would add a dependency, its own retry and telemetry
 behaviour, and a second place for credentials to leak, in exchange for very little.
+
+One adapter serves every OpenAI-compatible endpoint, parameterised by base URL and
+provider name rather than hard-wired to a vendor. Groq is therefore a settings entry, not
+a new adapter — which is the abstraction doing its job. Where a vendor genuinely differs
+it is declared, not discovered: `supports_message_name=False` for Groq, which rejects
+`messages[].name`. Only tool-repair messages carry one, so an unfiltered payload works
+perfectly until the first time a model gets its arguments wrong.
 
 Credentials are attached **per request**, never only to the client. An adapter handed a
 client by its caller would otherwise look authenticated while sending no key — which is
@@ -55,7 +62,7 @@ test suite and default development mode use, so the interfaces stay honest.
 
 ```env
 AI_MODE=cloud    # cloud | local | mock
-LLM_PROVIDER=openai
+LLM_PROVIDER=openai   # openai | groq | ollama | mock
 STT_PROVIDER=deepgram
 TTS_PROVIDER=elevenlabs
 ```

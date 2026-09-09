@@ -28,11 +28,16 @@ class EHRProviderName(StrEnum):
     EPIC = "epic"
 
 
-LLMProviderName = Literal["mock", "openai", "ollama"]
+LLMProviderName = Literal["mock", "openai", "groq", "ollama"]
 STTProviderName = Literal["mock", "deepgram", "whisper"]
 TTSProviderName = Literal["mock", "elevenlabs", "piper"]
 
 #: Providers that cost money. Used by the budget guard and by startup validation.
+#:
+#: Groq is deliberately absent: its developer tier is free, rate-limited rather
+#: than metered. Adding a card to a Groq account moves it to a paid tier, and
+#: at that point it belongs in this set with rates in ``ai/usage.py`` -- the
+#: guard cannot enforce a ceiling on spending it does not know about.
 PAID_PROVIDERS: frozenset[str] = frozenset({"openai", "deepgram", "elevenlabs"})
 
 
@@ -75,6 +80,12 @@ class Settings(BaseSettings):
 
     openai_api_key: str | None = None
     openai_model: str = "gpt-4.1-mini"
+
+    # Groq serves an OpenAI-compatible API, so it reuses that adapter with a
+    # different base URL rather than needing one of its own.
+    groq_api_key: str | None = None
+    groq_model: str = "llama-3.3-70b-versatile"
+    groq_base_url: str = "https://api.groq.com/openai/v1"
     deepgram_api_key: str | None = None
     deepgram_model: str = "nova-3"
     elevenlabs_api_key: str | None = None
@@ -136,6 +147,8 @@ class Settings(BaseSettings):
         missing: list[str] = []
         if self.llm_provider == "openai" and not self.openai_api_key:
             missing.append("OPENAI_API_KEY (LLM_PROVIDER=openai)")
+        if self.llm_provider == "groq" and not self.groq_api_key:
+            missing.append("GROQ_API_KEY (LLM_PROVIDER=groq)")
         if self.stt_provider == "deepgram" and self.stt_enabled and not self.deepgram_api_key:
             missing.append("DEEPGRAM_API_KEY (STT_PROVIDER=deepgram)")
         if self.tts_provider == "elevenlabs" and self.tts_enabled and not self.elevenlabs_api_key:

@@ -1,9 +1,15 @@
-"""OpenAI chat completions.
+"""Chat completions in the OpenAI wire format.
 
 Talks to the REST API over ``httpx`` rather than the vendor SDK. The surface
-used here is two endpoints and a stable JSON shape; an SDK would add a
+used here is one endpoint and a stable JSON shape; an SDK would add a
 dependency, its own retry and telemetry behaviour, and a second place for
 credentials to leak, in exchange for very little.
+
+That format is not OpenAI's alone -- Groq serves it too -- so this adapter is
+parameterised by base URL and provider name rather than hard-wired to one
+vendor. Adding an OpenAI-compatible provider is then a settings entry, not a
+new adapter. Where a vendor differs, it says so explicitly rather than being
+discovered in production: ``supports_message_name`` is the first such case.
 
 Usage is metered from the response's own ``usage`` block, not estimated: the
 budget guard is only as good as the numbers it reads (ADR 006).
@@ -17,6 +23,7 @@ from typing import Any
 import httpx
 
 from app.ai.providers.base import (
+    ChatMessage,
     LLMRequest,
     LLMResponse,
     LLMUsage,
@@ -38,9 +45,7 @@ RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 
 
 class OpenAILLMProvider:
-    """``LLMProvider`` backed by OpenAI chat completions."""
-
-    name = "openai"
+    """``LLMProvider`` for any OpenAI-compatible chat completions endpoint."""
 
     def __init__(
         self,
@@ -50,13 +55,20 @@ class OpenAILLMProvider:
         timeout: float = 30.0,
         ledger: UsageLedger | None = None,
         client: httpx.AsyncClient | None = None,
+        name: str = "openai",
+        supports_message_name: bool = True,
     ) -> None:
         if not api_key:
             # Reachable only by constructing the adapter directly; settings
             # validation catches the configured case at startup.
             raise ValueError("OpenAILLMProvider requires an API key")
+        self.name = name
         self.model = model
         self.ledger = ledger
+        #: Groq rejects ``messages[].name``. Only tool-repair messages carry
+        #: one, so an unfiltered payload works until the first time a model
+        #: gets its arguments wrong -- the worst moment to find out.
+        self.supports_message_name = supports_message_name
         # Credentials go on the request, not on the client. A client passed in
         # by a caller (a test, a shared pool) would otherwise carry no key, and
         # the adapter would look authenticated while sending nothing.
@@ -120,13 +132,17 @@ class OpenAILLMProvider:
     def _payload(self, request: LLMRequest) -> dict[str, Any]:
         return {
             "model": self.model,
-            "messages": [
-                {key: value for key, value in message.model_dump().items() if value is not None}
-                for message in request.messages
-            ],
+            "messages": [self._message(message) for message in request.messages],
             "max_completion_tokens": request.max_output_tokens,
             "temperature": request.temperature,
         }
+
+    def _message(self, message: ChatMessage) -> dict[str, Any]:
+        """One message, with fields this endpoint does not accept removed."""
+        fields = {key: value for key, value in message.model_dump().items() if value is not None}
+        if not self.supports_message_name:
+            fields.pop("name", None)
+        return fields
 
     async def _post(self, payload: dict[str, Any], session_id: str | None) -> dict[str, Any]:
         last_error: Exception | None = None
@@ -137,10 +153,12 @@ class OpenAILLMProvider:
                 )
             except httpx.HTTPError as exc:
                 last_error = exc
-                logger.warning("openai_request_failed", attempt=attempt, error=str(exc))
+                logger.warning(
+                    "llm_request_failed", provider=self.name, attempt=attempt, error=str(exc)
+                )
                 if attempt == 1:
                     continue
-                raise ProviderUnavailableError(f"OpenAI request failed: {exc}") from exc
+                raise ProviderUnavailableError(f"{self.name} request failed: {exc}") from exc
 
             if response.status_code in RETRYABLE_STATUS and attempt == 1:
                 logger.warning(
@@ -153,19 +171,19 @@ class OpenAILLMProvider:
             try:
                 body: dict[str, Any] = response.json()
             except ValueError as exc:
-                raise ProviderUnavailableError("OpenAI returned a non-JSON body") from exc
+                raise ProviderUnavailableError(f"{self.name} returned a non-JSON body") from exc
             logger.info(
-                "openai_response",
+                "llm_response",
+                provider=self.name,
                 session_id=session_id,
                 model=self.model,
                 status=response.status_code,
             )
             return body
 
-        raise ProviderUnavailableError(f"OpenAI request failed: {last_error}")
+        raise ProviderUnavailableError(f"{self.name} request failed: {last_error}")
 
-    @staticmethod
-    def _error_message(response: httpx.Response) -> str:
+    def _error_message(self, response: httpx.Response) -> str:
         """A useful message that cannot contain the request or the key."""
         detail = ""
         try:
@@ -174,14 +192,16 @@ class OpenAILLMProvider:
         except ValueError:
             detail = ""
         if response.status_code == 401:
-            return "OpenAI rejected the API key (401). Check OPENAI_API_KEY."
-        return f"OpenAI returned {response.status_code}{f': {detail}' if detail else ''}"
+            return f"{self.name} rejected the API key (401). Check {self.name.upper()}_API_KEY."
+        if response.status_code == 429:
+            return f"{self.name} rate limit reached (429){f': {detail}' if detail else ''}"
+        return f"{self.name} returned {response.status_code}{f': {detail}' if detail else ''}"
 
     @staticmethod
     def _first_choice(body: dict[str, Any]) -> dict[str, Any]:
         choices = body.get("choices") or []
         if not choices:
-            raise ProviderUnavailableError("OpenAI returned no choices")
+            raise ProviderUnavailableError("the model returned no choices")
         first: dict[str, Any] = choices[0]
         return first
 
@@ -210,7 +230,7 @@ class OpenAILLMProvider:
         try:
             arguments = json.loads(function.get("arguments") or "{}")
         except json.JSONDecodeError:
-            logger.warning("openai_tool_arguments_unparseable", tool=name)
+            logger.warning("llm_tool_arguments_unparseable", tool=name)
             return None
         if not isinstance(arguments, dict):
             return None

@@ -378,3 +378,100 @@ class TestElevenLabs:
             ElevenLabsTTSProvider(api_key="", voice_id="v")
         with pytest.raises(ValueError, match="voice id"):
             ElevenLabsTTSProvider(api_key="k", voice_id="")
+
+
+class TestGroqCompatibility:
+    """Groq speaks the OpenAI wire format, with one documented difference.
+
+    It rejects ``messages[].name``, and the only message that carries one is a
+    tool-repair message. So an unfiltered payload works perfectly until the
+    first time a model gets its arguments wrong -- which is both the worst
+    moment to find out and the hardest case to reach by accident.
+    """
+
+    def _provider(self, handler: Any, **kwargs: Any) -> OpenAILLMProvider:
+        return OpenAILLMProvider(
+            api_key="gsk-test",
+            model="llama-3.3-70b-versatile",
+            client=openai_client(handler),
+            name="groq",
+            supports_message_name=False,
+            **kwargs,
+        )
+
+    def _capture(self, sink: dict[str, Any]) -> Any:
+        def handle(request: httpx.Request) -> httpx.Response:
+            sink.update(json.loads(request.content))
+            return httpx.Response(200, json=COMPLETION)
+
+        return handle
+
+    async def test_the_unsupported_name_field_is_stripped(self) -> None:
+        sent: dict[str, Any] = {}
+        provider = self._provider(self._capture(sent))
+        await provider.generate(
+            LLMRequest(
+                messages=[
+                    ChatMessage(
+                        role="tool",
+                        tool_call_id="call-1",
+                        name="book_appointment",
+                        content="INVALID_ARGUMENTS: slot_id: Field required",
+                    )
+                ]
+            )
+        )
+        assert "name" not in sent["messages"][0]
+        assert sent["messages"][0]["tool_call_id"] == "call-1"
+        assert sent["messages"][0]["content"].startswith("INVALID_ARGUMENTS")
+
+    async def test_openai_keeps_the_name_field(self) -> None:
+        sent: dict[str, Any] = {}
+        provider = OpenAILLMProvider(api_key="k", client=openai_client(self._capture(sent)))
+        await provider.generate(
+            LLMRequest(
+                messages=[
+                    ChatMessage(role="tool", tool_call_id="c", name="book_appointment", content="x")
+                ]
+            )
+        )
+        assert sent["messages"][0]["name"] == "book_appointment"
+
+    async def test_a_repair_message_survives_the_round_trip(self) -> None:
+        """The end-to-end version of the above, through the real rejection type."""
+        from app.ai.tool_calls import ToolCallRejection
+
+        rejection = ToolCallRejection(
+            tool_call_id="call-1",
+            name="book_appointment",
+            code="INVALID_ARGUMENTS",
+            message="slot_id: Field required",
+        )
+        sent: dict[str, Any] = {}
+        provider = self._provider(self._capture(sent))
+        await provider.generate(LLMRequest(messages=[rejection.as_repair_message()]))
+        assert "name" not in sent["messages"][0]
+
+    async def test_usage_is_recorded_against_groq_at_zero_cost(self) -> None:
+        ledger = UsageLedger()
+        provider = self._provider(responder(COMPLETION), ledger=ledger)
+        await provider.generate(ASK)
+
+        assert {r.provider for r in ledger.records} == {"groq"}
+        assert sum(r.quantity for r in ledger.records if r.metric == INPUT_TOKENS) == 120
+        # Free tier: metered but not priced.
+        assert ledger.project_total() == Decimal("0")
+
+    async def test_a_rate_limit_is_reported_as_such(self) -> None:
+        provider = self._provider(
+            responder({"error": {"message": "rate limit reached"}}, status=429)
+        )
+        with pytest.raises(ProviderUnavailableError, match="rate limit"):
+            await provider.generate(ASK)
+
+    async def test_errors_name_the_provider_that_failed(self) -> None:
+        provider = self._provider(responder({}, status=401))
+        with pytest.raises(ProviderUnavailableError) as caught:
+            await provider.generate(ASK)
+        assert "GROQ_API_KEY" in str(caught.value)
+        assert "gsk-test" not in str(caught.value)

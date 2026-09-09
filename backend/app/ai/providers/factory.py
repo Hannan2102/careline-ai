@@ -25,6 +25,7 @@ from app.ai.providers.base import (
     LLMProvider,
     LLMRequest,
     LLMResponse,
+    ProviderUnavailableError,
     STTProvider,
     ToolCallRequest,
     ToolCallResponse,
@@ -74,10 +75,36 @@ class GuardedLLMProvider:
         return self.fallback
 
     async def generate(self, request: LLMRequest) -> LLMResponse:
-        return await self._choose(request.session_id).generate(request)
+        provider = self._choose(request.session_id)
+        try:
+            return await provider.generate(request)
+        except ProviderUnavailableError as exc:
+            return await self._degrade(exc, provider).generate(request)
 
     async def tool_call(self, request: ToolCallRequest) -> ToolCallResponse:
-        return await self._choose(request.session_id).tool_call(request)
+        provider = self._choose(request.session_id)
+        try:
+            return await provider.tool_call(request)
+        except ProviderUnavailableError as exc:
+            return await self._degrade(exc, provider).tool_call(request)
+
+    def _degrade(self, exc: ProviderUnavailableError, attempted: LLMProvider) -> LLMProvider:
+        """Fall back after a provider failure, loudly.
+
+        A rate limit or an outage should not end a call. This is deliberately
+        not silent: the log line is the only thing that distinguishes "the
+        deterministic path answered because we chose it" from "because the
+        vendor was down", and a free tier makes the second much more likely.
+        """
+        if attempted is self.fallback:
+            raise exc
+        logger.error(
+            "llm_unavailable_falling_back",
+            provider=attempted.name,
+            fallback=self.fallback.name,
+            error=str(exc),
+        )
+        return self.fallback
 
 
 class GuardedTTSProvider:
@@ -156,6 +183,28 @@ def build_llm_provider(
         )
         logger.info("llm_provider_built", provider=paid.name, model=resolved.openai_model)
         return GuardedLLMProvider(paid, mock, BudgetGuard(resolved, usage))
+
+    if resolved.llm_provider == "groq":
+        if not resolved.groq_api_key:
+            logger.error("groq_selected_without_key_falling_back_to_mock")
+            return mock
+        from app.ai.providers.llm.openai import OpenAILLMProvider
+
+        # Free tier: rate-limited rather than metered, so it is not in
+        # PAID_PROVIDERS and the guard will not block it. Tokens are still
+        # recorded, priced at zero, so the metering path stays exercised.
+        groq = OpenAILLMProvider(
+            api_key=resolved.groq_api_key,
+            model=resolved.groq_model,
+            base_url=resolved.groq_base_url,
+            ledger=usage,
+            name="groq",
+            supports_message_name=False,
+        )
+        logger.info("llm_provider_built", provider=groq.name, model=resolved.groq_model)
+        # Wrapped anyway: the wrapper is what degrades to the deterministic
+        # path when the free tier's rate limit is reached.
+        return GuardedLLMProvider(groq, mock, BudgetGuard(resolved, usage))
 
     if resolved.llm_provider == "ollama":
         # Phase 17. Selecting it today gets the mock rather than a stub that
