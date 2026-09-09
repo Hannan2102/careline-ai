@@ -17,8 +17,9 @@ install: ## Create the venv and install backend dependencies
 	VIRTUAL_ENV=.venv $(PIP) -e ".[dev,db]"
 	@echo "Done. Copy .env.example to .env, then run 'make dev'."
 
-up: ## Start PostgreSQL and HAPI FHIR
+up: ## Start PostgreSQL and HAPI FHIR (follow with 'make wait-fhir')
 	$(COMPOSE) up -d postgres hapi-fhir
+	@echo "Started. HAPI takes ~20-60s to build its schema; run 'make wait-fhir'."
 
 down: ## Stop infrastructure (keeps data)
 	$(COMPOSE) down

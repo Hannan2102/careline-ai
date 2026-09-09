@@ -43,16 +43,14 @@ services:
       SPRING_CONFIG_ADDITIONAL_LOCATION: file:///app/config/
     volumes:
       - ./infra/hapi/application.yaml:/app/config/application.yaml:ro
-    healthcheck:
-      # Generous timeout on purpose: the JVM saturates CPU during an
-      # integration run, and a tight limit reports "unhealthy" for a server
-      # that is merely busy. A false alarm here trains you to ignore the one
-      # that matters.
-      test: ["CMD-SHELL", "curl -fsS --max-time 20 http://localhost:8080/fhir/metadata > /dev/null || exit 1"]
-      interval: 20s
-      timeout: 25s
-      retries: 15
-      start_period: 90s
+    # No container healthcheck. The hapiproject/hapi image ships neither a
+    # shell nor curl, so a CMD-SHELL probe can never execute -- it reports
+    # "unhealthy" forever while the server is answering requests perfectly
+    # well. A probe that always fails is worse than none: it trains you to
+    # ignore the status column.
+    #
+    # Readiness is checked from the host instead, where the tools exist:
+    #   make wait-fhir     (scripts/wait_for_fhir.py, polls /fhir/metadata)
     restart: unless-stopped
 
   # The backend is normally run on the host with 'make dev' for fast reloads.
@@ -64,8 +62,11 @@ services:
       dockerfile: infra/backend.Dockerfile
     container_name: careline-backend
     depends_on:
+      # service_started, not service_healthy: HAPI has no usable healthcheck
+      # (see above). The backend tolerates a FHIR server that is still coming
+      # up -- /api/system/status reports it as unreachable rather than failing.
       hapi-fhir:
-        condition: service_healthy
+        condition: service_started
     ports:
       - "8000:8000"
     environment:
