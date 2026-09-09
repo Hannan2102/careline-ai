@@ -99,23 +99,31 @@ Lookup, cancel, reschedule — with disambiguation when the patient has more tha
 
 ---
 
-### ⬜ Phase 6 — Medication retrieval
+### ✅ Phase 6 — Medication retrieval
 Active `MedicationRequest` lookup with verbatim dosage text.
 
 **Acceptance**
-- Returned dosage string is byte-identical to the stored instruction
-- Response attributes the value to the prescription on file
-- No path allows the LLM to author or alter a dosage
+- [x] Returned dosage string is byte-identical to the stored instruction, asserted against
+      the EHR rather than against a constant
+- [x] Response attributes the value to the prescription on file
+- [x] No path allows the LLM to author or alter a dosage: the answer is rendered from a
+      template and re-checked before it is spoken
+- [x] A prescription with no instruction text escalates rather than being reconstructed
+- [x] Unknown medications are reported as absent, never approximated
 
 ---
 
-### ⬜ Phase 7 — Refill requests
+### ✅ Phase 7 — Refill requests
 Create a refill request pending clinician review.
 
 **Acceptance**
-- Persists a `refill_request` in `PENDING_REVIEW`, linked to an active MedicationRequest
-- Never authorises, never creates a prescription, never changes a dose
-- Patient is told it was sent for review, not that it was approved
+- [x] Persists a `refill_request` in `PENDING_REVIEW`, linked to an active MedicationRequest
+- [x] Never authorises, never creates a prescription, never changes a dose — `RefillService`
+      has no approve/authorise/fulfil method at all, asserted by a test
+- [x] The EHR is provably unchanged by a refill request
+- [x] Patient is told it was sent for review, not that it was approved
+- [x] No active prescription escalates instead of creating an orphan request
+- [x] A duplicate request is not stacked on the clinician's queue
 
 ---
 

@@ -4,7 +4,7 @@
 
 ## Current phase
 
-**Phases 0–5 and 8 complete.** Next: Phase 6 (medication retrieval).
+**Phases 0–8 complete.** Next: Phase 9 (text agent interface) — the orchestrator that makes safety-before-dispatch structural rather than compositional.
 
 ## Completed
 
@@ -77,6 +77,15 @@
   record was touched and by which session, never the clinical content itself
 - Booking (Phase 4) was retrofitted to audit as well, for consistency
 
+**Phases 6 & 7 — Medication retrieval and refill requests** ✅
+- `MedicationLookupWorkflow` — reads the stored instruction back verbatim, and treats
+  not-found, ambiguous, and no-dosage-on-file as three different situations
+- `RefillRequestWorkflow` + `RefillService` — creates requests in `PENDING_REVIEW`
+  and has no code path that could approve one
+- `IdentityCollector` extracted: identity handling was duplicated across workflows,
+  and divergence in a security-relevant path is how guarantees quietly leak. One
+  implementation, with a test asserting all four workflows reply identically.
+
 ## What actually works — and how I know
 
 | Capability | Verified by |
@@ -119,6 +128,13 @@
 | Cancellation needs explicit confirmation | `test_cancellation_requires_explicit_confirmation` |
 | Reads, writes, and denials are all audited | `TestAuditTrail` |
 | The audit trail contains no names, dates of birth, or drugs | `test_the_audit_trail_holds_no_clinical_content` |
+| Dosage read back matches the EHR byte for byte | `test_the_answer_is_not_paraphrased` |
+| A prescription with no instruction escalates clinically | `test_a_missing_instruction_escalates_instead_of_guessing` |
+| Listing medications gives names without dosages | `test_listing_medications_gives_names_without_dosages` |
+| A refill is sent for review, never described as approved | `test_a_refill_is_sent_for_review_not_approved` |
+| A refill leaves the EHR provably unchanged | `test_a_refill_never_becomes_a_prescription` |
+| `RefillService` has no method that could authorise | `test_the_refill_service_has_no_way_to_authorise` |
+| All four workflows reprompt for identity identically | `test_every_workflow_reprompts_identically` |
 | Patient search: exact, unknown, ambiguous, wrong DOB | `tests/integration/test_memory_ehr_provider.py::TestPatientSearch` |
 | Booking with type-driven duration and slot consumption | `TestBooking` |
 | Double-booking refused; 5 concurrent bookings → exactly 1 winner | `test_concurrent_booking_of_one_slot_has_exactly_one_winner` |
@@ -137,8 +153,8 @@
 ## Last test results
 
 ```
-503 passed in 127.8s  (full suite, both EHR providers)
-371 passed in   2.0s  (offline suite: -m "not integration")
+554 passed in 145.5s  (full suite, both EHR providers)
+397 passed in   2.0s  (offline suite: -m "not integration")
 ```
 
 - The HAPI suite runs against a live FHIR 4.0.1 server via `make test-int`; it skips
@@ -183,8 +199,7 @@
 
 ## Next tasks
 
-1. **Phase 6/7** — medication lookup and refill-request workflows.
-2. **Phase 9** — safety policies land before the agent can talk, so there is
+1. **Phase 9** — safety policies land before the agent can talk, so there is
    never a build in which the agent answers a clinical question.
 
 ## Architecture decisions

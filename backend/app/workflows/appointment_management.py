@@ -28,7 +28,6 @@ from app.services.escalation_service import EscalationService
 from app.services.scheduling_service import DEFAULT_OFFER_COUNT, SchedulingService
 from app.services.verification_service import (
     SecondFactorType,
-    VerificationOutcome,
     VerificationService,
 )
 from app.utils.formatting import format_appointment, format_day, format_time
@@ -39,6 +38,7 @@ from app.workflows.base import (
     WorkflowResponse,
     WorkflowStatus,
 )
+from app.workflows.identity import IdentityCollector, IdentityOutcome
 
 logger = get_logger(__name__)
 
@@ -101,6 +101,7 @@ class AppointmentManagementWorkflow:
         self.scheduling = scheduling
         self.escalations = escalations
         self.audit = audit or AuditService()
+        self.identity = IdentityCollector(verification, self.audit)
 
     # ---------------------------------------------------------------- entry
     async def start(
@@ -159,90 +160,35 @@ class AppointmentManagementWorkflow:
     async def _handle_identity(
         self, session: SessionState, turn: ManagementInput, now: datetime
     ) -> WorkflowResponse:
-        if turn.full_name is None or turn.date_of_birth is None:
-            return self._awaiting(
-                session,
-                ManagementState.COLLECTING_IDENTITY,
-                "Could I take your full name and date of birth first?",
-                AwaitedInput.IDENTITY,
-            )
-
-        self.audit.record(AuditAction.VERIFICATION_ATTEMPTED, session_id=session.session_id)
-        result = await self.verification.verify_identity(
-            session, turn.full_name, turn.date_of_birth
-        )
-
-        if result.outcome is VerificationOutcome.VERIFIED:
-            self.audit.record(
-                AuditAction.VERIFICATION_SUCCEEDED,
-                session_id=session.session_id,
-                patient_ref=session.patient_ref,
-            )
+        result = await self.identity.submit_identity(session, turn.full_name, turn.date_of_birth)
+        if result.outcome is IdentityOutcome.VERIFIED:
             return await self._load_appointments(session, turn, now)
-
-        if result.outcome is VerificationOutcome.SECOND_FACTOR_REQUIRED:
-            return self._awaiting(
-                session,
-                ManagementState.AWAITING_SECOND_FACTOR,
-                "Thanks. Could I also take the last four digits of the phone number we "
-                "have on file?",
-                AwaitedInput.SECOND_FACTOR,
-            )
-
-        self.audit.record(
-            AuditAction.VERIFICATION_FAILED,
-            session_id=session.session_id,
-            outcome="denied",
-        )
-        if result.outcome in (
-            VerificationOutcome.LOCKED_OUT,
-            VerificationOutcome.ALREADY_LOCKED,
-        ):
+        if result.outcome is IdentityOutcome.LOCKED_OUT:
             return self._locked_out(session, result.escalation_id)
-
         return self._awaiting(
             session,
-            ManagementState.COLLECTING_IDENTITY,
-            "I couldn't find a match for those details. Could you give me your full name "
-            "and date of birth once more?",
-            AwaitedInput.IDENTITY,
+            ManagementState.AWAITING_SECOND_FACTOR
+            if result.outcome is IdentityOutcome.NEEDS_SECOND_FACTOR
+            else ManagementState.COLLECTING_IDENTITY,
+            result.message,
+            result.awaiting or AwaitedInput.IDENTITY,
         )
 
     async def _handle_second_factor(
         self, session: SessionState, turn: ManagementInput, now: datetime
     ) -> WorkflowResponse:
-        if turn.second_factor_value is None:
-            return self._awaiting(
-                session,
-                ManagementState.AWAITING_SECOND_FACTOR,
-                "Could I take the last four digits of the phone number on file?",
-                AwaitedInput.SECOND_FACTOR,
-            )
-
-        result = await self.verification.submit_second_factor(
-            session,
-            turn.second_factor_type or SecondFactorType.PHONE_LAST_FOUR,
-            turn.second_factor_value,
+        result = await self.identity.submit_second_factor(
+            session, turn.second_factor_type, turn.second_factor_value
         )
-        if result.outcome is VerificationOutcome.VERIFIED:
-            self.audit.record(
-                AuditAction.VERIFICATION_SUCCEEDED,
-                session_id=session.session_id,
-                patient_ref=session.patient_ref,
-            )
+        if result.outcome is IdentityOutcome.VERIFIED:
             return await self._load_appointments(session, turn, now)
-
-        if result.outcome in (
-            VerificationOutcome.LOCKED_OUT,
-            VerificationOutcome.ALREADY_LOCKED,
-        ):
+        if result.outcome is IdentityOutcome.LOCKED_OUT:
             return self._locked_out(session, result.escalation_id)
-
         return self._awaiting(
             session,
             ManagementState.AWAITING_SECOND_FACTOR,
-            "That didn't match what we have on file. Could you try those digits again?",
-            AwaitedInput.SECOND_FACTOR,
+            result.message,
+            result.awaiting or AwaitedInput.SECOND_FACTOR,
         )
 
     # -------------------------------------------------------- appointments
