@@ -1,0 +1,68 @@
+# CI runs entirely offline with mock providers.
+# A test that reaches a paid API is a failing test (ADR 005, ADR 006).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Belt and braces: even if a test forgot to isolate itself, no paid provider
+  # can be constructed and no credential exists to call one.
+  AI_MODE: mock
+  EHR_PROVIDER: memory
+  TEXT_ONLY_MODE: "true"
+  APP_ENV: test
+
+jobs:
+  backend:
+    name: Backend (lint, types, tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv pip install --system -e ".[dev,db]"
+
+      - name: Lint (ruff)
+        run: ruff check backend tests scripts
+
+      - name: Format check (ruff)
+        run: ruff format --check backend tests scripts
+
+      - name: Type check (mypy)
+        run: mypy
+
+      - name: Tests (no network, no cost)
+        run: pytest -m "not integration and not paid" -q
+
+      - name: Assert no paid provider was reachable
+        run: |
+          test -z "${OPENAI_API_KEY:-}" || (echo "OPENAI_API_KEY must not be set in CI" && exit 1)
+          test -z "${DEEPGRAM_API_KEY:-}" || (echo "DEEPGRAM_API_KEY must not be set in CI" && exit 1)
+          test -z "${ELEVENLABS_API_KEY:-}" || (echo "ELEVENLABS_API_KEY must not be set in CI" && exit 1)
+
+  secrets-scan:
+    name: No committed secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure .env is not committed
+        run: |
+          if git ls-files --error-unmatch .env 2>/dev/null; then
+            echo "ERROR: .env is committed" && exit 1
+          fi
+          echo "OK: no .env in the index"
