@@ -1,0 +1,79 @@
+[
+  {
+    "resourceType": "Location",
+    "id": "loc-oakwood",
+    "status": "active",
+    "name": "Oakwood Family Medicine",
+    "telecom": [{"system": "phone", "value": "(555) 019-2200"}],
+    "address": {
+      "line": ["1420 Oakwood Avenue, Suite 200"],
+      "city": "Riverton",
+      "state": "OH",
+      "postalCode": "45042",
+      "country": "US"
+    }
+  },
+  {
+    "resourceType": "Practitioner",
+    "id": "prac-sarah-patel",
+    "active": true,
+    "name": [{"use": "official", "family": "Patel", "given": ["Sarah"], "prefix": ["Dr."]}]
+  },
+  {
+    "resourceType": "Practitioner",
+    "id": "prac-michael-johnson",
+    "active": true,
+    "name": [{"use": "official", "family": "Johnson", "given": ["Michael"], "prefix": ["Dr."]}]
+  },
+  {
+    "resourceType": "Practitioner",
+    "id": "prac-emily-chen",
+    "active": true,
+    "name": [{"use": "official", "family": "Chen", "given": ["Emily"], "prefix": ["Dr."]}]
+  },
+  {
+    "resourceType": "PractitionerRole",
+    "id": "role-patel-family-medicine",
+    "active": true,
+    "practitioner": {"reference": "Practitioner/prac-sarah-patel"},
+    "location": [{"reference": "Location/loc-oakwood"}],
+    "specialty": [{"coding": [{"system": "http://snomed.info/sct", "code": "419772000", "display": "Family Medicine"}], "text": "Family Medicine"}]
+  },
+  {
+    "resourceType": "PractitionerRole",
+    "id": "role-johnson-internal-medicine",
+    "active": true,
+    "practitioner": {"reference": "Practitioner/prac-michael-johnson"},
+    "location": [{"reference": "Location/loc-oakwood"}],
+    "specialty": [{"coding": [{"system": "http://snomed.info/sct", "code": "419192003", "display": "Internal Medicine"}], "text": "Internal Medicine"}]
+  },
+  {
+    "resourceType": "PractitionerRole",
+    "id": "role-chen-family-medicine",
+    "active": true,
+    "practitioner": {"reference": "Practitioner/prac-emily-chen"},
+    "location": [{"reference": "Location/loc-oakwood"}],
+    "specialty": [{"coding": [{"system": "http://snomed.info/sct", "code": "419772000", "display": "Family Medicine"}], "text": "Family Medicine"}]
+  },
+  {
+    "resourceType": "Schedule",
+    "id": "sched-sarah-patel",
+    "active": true,
+    "actor": [{"reference": "Practitioner/prac-sarah-patel"}, {"reference": "Location/loc-oakwood"}],
+    "comment": "Mon-Fri 08:00-17:00, break 12:00-13:00 (America/New_York)"
+  },
+  {
+    "resourceType": "Schedule",
+    "id": "sched-michael-johnson",
+    "active": true,
+    "actor": [{"reference": "Practitioner/prac-michael-johnson"}, {"reference": "Location/loc-oakwood"}],
+    "comment": "Mon-Fri 08:00-17:00, break 12:00-13:00 (America/New_York)"
+  },
+  {
+    "resourceType": "Schedule",
+    "id": "sched-emily-chen",
+    "active": true,
+    "actor": [{"reference": "Practitioner/prac-emily-chen"}, {"reference": "Location/loc-oakwood"}],
+    "comment": "Mon-Fri 08:00-17:00, break 12:00-13:00 (America/New_York)"
+  }
+]
