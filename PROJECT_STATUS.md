@@ -280,10 +280,22 @@
 | Ending a call keeps the patient it was about | `test_an_ended_call_keeps_the_patient_it_was_about` |
 | A trailing "yes" does not make a call read as "unknown" | `test_the_last_meaningful_intent_is_shown` |
 
-**Not yet verified:** a booking driven by a real microphone in a real browser. That needs
-a Deepgram key, which this project does not have yet. Everything below the microphone —
-the socket, the turn manager, the agent, and live speech synthesis — has been exercised;
-speech *recognition* in the browser has not.
+**Verified live on 2026-09-09**, over the real WebSocket against real Deepgram and real
+Groq: three spoken utterances in, four turns, one genuine barge-in, 11 seconds of agent
+speech back. Time from a final transcript to the first byte of the agent's reply was
+**1069–1203 ms**, of which 800 ms is the deliberate end-of-utterance wait — so the
+pipeline itself contributes roughly 270–400 ms.
+
+**Not yet verified:** capture from an actual browser microphone. Everything above it is
+exercised; the `AudioWorklet` path and `getUserMedia`'s echo cancellation are not.
+
+**One real finding, for Phase 14.** A date of birth split across two finals — "I was born
+on the fourteenth of March nineteen" then "seventy eight" — because Deepgram's
+`endpointing=300` finalised mid-number and the halves arrived ~1.1 s apart, wider than the
+800 ms window that would have joined them. Verification therefore never completed. This is
+the risk this project already documented as the most consequential in the domain, now
+measured rather than predicted: the fix is a tuning trade-off (a longer end-of-utterance
+window is more robust and slower), and tuning without measurement is guessing.
 
 ## Last test results
 

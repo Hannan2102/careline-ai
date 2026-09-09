@@ -215,9 +215,10 @@ fourth implementation.
 Browser mic → STT → agent → TTS → speaker.
 
 **Acceptance**
-- [ ] A full booking completes by voice **in the browser** — the transport is built
-      (ADR 007) and the socket contract is verified, but this has not been driven with a
-      live microphone: it needs a Deepgram key, which does not exist yet
+- [x] The whole voice loop runs over the real transport — real speech in through
+      Deepgram, the agent's reply back as Groq speech, with a barge-in on the way
+- [ ] Driven from an actual browser microphone. Everything above the microphone is
+      verified; the browser's own capture path is not
 - [x] Barge-in, silence, and timeout handled by the turn manager
 - [x] Voice changes no business logic
 - [x] Session cost cap enforced live

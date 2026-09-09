@@ -22,6 +22,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+import tempfile
+import time
+import wave
+from collections.abc import AsyncIterator
 from decimal import Decimal
 from pathlib import Path
 
@@ -116,13 +120,91 @@ async def smoke_elevenlabs(settings: Settings) -> str:
 
 
 async def smoke_deepgram(settings: Settings) -> str:
-    """Deepgram needs a live audio stream, which this script has no source for.
+    """Stream real speech at Deepgram and check it comes back as words.
 
-    Reported rather than faked: a smoke test that transcribes silence proves
-    the socket opened and nothing else, and it would still be billed.
+    The audio is synthesised locally by macOS `say`, which makes this
+    repeatable and free of any recording. Transcribing *silence* would prove
+    only that the socket opened -- and would still be billed -- so the check is
+    that a known sentence survives the round trip.
+
+    Streamed in 100 ms chunks with real pauses between them, because that is
+    the property being tested: Deepgram finalises while the speaker is still
+    talking, and a burst upload would not exercise that at all.
     """
-    _ = settings
-    return "skipped - streaming STT is exercised end to end in Phase 13"
+    from app.ai.providers.stt.deepgram import DeepgramSTTProvider
+
+    spoken = "I would like to book an appointment with doctor Patel on Thursday."
+    pcm = await _synthesise_locally(spoken)
+    if pcm is None:
+        return "skipped - no local speech synthesiser to generate test audio"
+
+    ledger = get_usage_ledger()
+    stt = DeepgramSTTProvider(
+        api_key=settings.deepgram_api_key or "",
+        model=settings.deepgram_model,
+        ledger=ledger,
+        session_id="smoke",
+    )
+
+    chunk = 3200  # 100 ms of 16 kHz 16-bit mono
+
+    async def audio() -> AsyncIterator[bytes]:
+        for start in range(0, len(pcm), chunk):
+            yield pcm[start : start + chunk]
+            await asyncio.sleep(0.1)
+
+    started = time.perf_counter()
+    finals: list[str] = []
+    interims = 0
+    first_interim_at: float | None = None
+    async for transcript in stt.transcribe_stream(audio()):
+        if transcript.is_final:
+            finals.append(transcript.text)
+        else:
+            interims += 1
+            if first_interim_at is None:
+                first_interim_at = time.perf_counter()
+
+    heard = " ".join(finals).strip()
+    if not heard:
+        return "connected, but Deepgram returned no transcript"
+
+    audio_seconds = len(pcm) / (16000 * 2)
+    print(f"    {DIM}said:  {spoken}{RESET}")
+    print(f"    {DIM}heard: {heard}{RESET}")
+    if first_interim_at is not None:
+        # The number that justifies streaming over batch: a partial result
+        # while the speaker is still talking (COSTS.md).
+        print(
+            f"    {DIM}first interim after {(first_interim_at - started) * 1000:.0f} ms "
+            f"of a {audio_seconds:.1f}s utterance, {interims} in total{RESET}"
+        )
+    return f"transcribed {audio_seconds:.1f}s of speech"
+
+
+async def _synthesise_locally(text: str) -> bytes | None:
+    """16 kHz mono 16-bit PCM from the OS, or ``None`` if it cannot.
+
+    Only macOS is handled. This is a developer smoke test, not something CI
+    runs, so a missing synthesiser is a skip rather than a failure.
+    """
+    if sys.platform != "darwin":
+        return None
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "utterance.wav"
+        process = await asyncio.create_subprocess_exec(
+            "say",
+            "--data-format=LEI16@16000",
+            "-o",
+            str(path),
+            text,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        if await process.wait() != 0 or not path.exists():
+            return None
+        with wave.open(str(path), "rb") as handle:
+            return handle.readframes(handle.getnframes())
 
 
 SMOKES = {

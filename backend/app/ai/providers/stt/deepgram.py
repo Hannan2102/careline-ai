@@ -11,6 +11,7 @@ free of it.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Any
@@ -74,51 +75,71 @@ class DeepgramSTTProvider:
         return f"{DEFAULT_URL}?{query}" if "?" not in DEFAULT_URL else f"{DEFAULT_URL}&{query}"
 
     async def transcribe_stream(self, audio: AsyncIterator[bytes]) -> AsyncIterator[Transcript]:
+        """Stream audio up and transcripts down, concurrently.
+
+        Sending and receiving run as separate tasks because they are genuinely
+        independent: Deepgram returns interim results *while* the caller is
+        still speaking, which is the entire reason for choosing streaming
+        recognition over batch (COSTS.md). Polling for a reply between sends
+        would serialise them and spend the latency budget on nothing.
+
+        An earlier version did exactly that, using a non-blocking `recv` --
+        against an API that has no such parameter. It failed on the first real
+        connection, having passed its tests, because the test double had been
+        written to match the mistake.
+        """
         connect = self._connect or self._default_connect()
         try:
             async with connect(
                 self.endpoint, additional_headers={"Authorization": f"Token {self._api_key}"}
             ) as socket:
-                async for chunk in audio:
-                    await socket.send(chunk)
-                    async for transcript in self._drain(socket):
+                pump = asyncio.create_task(self._pump(socket, audio))
+                try:
+                    # Deepgram closes the socket once it has finalised
+                    # everything it was sent, which is what ends this loop.
+                    async for message in socket:
+                        transcript = self._parse(message)
+                        if transcript is None:
+                            continue
+                        if (
+                            transcript.is_final
+                            and self.ledger is not None
+                            and transcript.audio_seconds
+                        ):
+                            self.ledger.record(
+                                self.name, STT_SECONDS, transcript.audio_seconds, self.session_id
+                            )
                         yield transcript
-                # Deepgram flushes and closes on an empty binary frame.
-                await socket.send(b"")
-                async for transcript in self._drain(socket, until_closed=True):
-                    yield transcript
+                finally:
+                    await self._stop(pump)
         except ProviderUnavailableError:
             raise
         except Exception as exc:  # vendor and socket errors alike
             raise ProviderUnavailableError(f"Deepgram stream failed: {exc}") from exc
 
-    async def _drain(self, socket: Any, until_closed: bool = False) -> AsyncIterator[Transcript]:
-        """Yield whatever the socket has ready.
-
-        Non-blocking while audio is still arriving: waiting for a response
-        between chunks would serialise the stream and spend the latency budget
-        on nothing.
-        """
-        while True:
-            message = await (socket.recv() if until_closed else self._recv_nowait(socket))
-            if message is None:
-                return
-            transcript = self._parse(message)
-            if transcript is None:
-                continue
-            if transcript.is_final and self.ledger is not None and transcript.audio_seconds:
-                self.ledger.record(
-                    self.name, STT_SECONDS, transcript.audio_seconds, self.session_id
-                )
-            yield transcript
+    async def _pump(self, socket: Any, audio: AsyncIterator[bytes]) -> None:
+        """Forward microphone audio, then ask Deepgram to finalise."""
+        async for chunk in audio:
+            await socket.send(chunk)
+        # Tells Deepgram to flush its buffer, emit any last final, and close.
+        # Without it a caller who stops talking waits for a timeout instead of
+        # hearing an answer.
+        await socket.send(json.dumps({"type": "CloseStream"}))
 
     @staticmethod
-    async def _recv_nowait(socket: Any) -> Any:
-        """One message if one is waiting, otherwise ``None``."""
+    async def _stop(pump: asyncio.Task[None]) -> None:
+        """Stop the sender, surfacing a genuine failure but not a cancellation."""
+        current = asyncio.current_task()
+        pump.cancel()
         try:
-            return await socket.recv(timeout=0)
-        except TimeoutError:
-            return None
+            await pump
+        except asyncio.CancelledError:
+            # Ours, not this task's -- unless this task is itself being
+            # cancelled, which is a different thing and must propagate.
+            # `CancelledError` is a BaseException, so `suppress(Exception)`
+            # would not catch it here either.
+            if current is not None and current.cancelling() > 0:
+                raise
 
     @staticmethod
     def _parse(message: Any) -> Transcript | None:

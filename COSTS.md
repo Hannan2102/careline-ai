@@ -212,7 +212,8 @@ single call and persists the usage, so the next run counts it against the ceilin
 
 Budgeted at **under $0.25 for the whole exercise** (ROADMAP Phase 12). The prompt is
 `"Reply with exactly: ok"` with a 16-token output cap; the TTS phrase is three words.
-Deepgram is reported as skipped rather than faked — a smoke test that transcribes silence
+Deepgram synthesises a known sentence with macOS `say` and streams it in 100 ms chunks —
+transcribing silence
 proves only that a socket opened, and it would still be billed.
 
 ## Practices

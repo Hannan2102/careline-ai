@@ -8,6 +8,7 @@ prove only that the mock works.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from decimal import Decimal
@@ -208,21 +209,41 @@ class TestOpenAIToolCalls:
 
 
 class FakeSocket:
-    """The two methods the adapter uses, and nothing else."""
+    """The surface of a `websockets` client connection that the adapter uses.
+
+    Async-iterable, exactly as the real one is: messages arrive until the
+    server closes. This double previously offered `recv(timeout=...)`, which
+    the real client has never had -- so the adapter was written against an API
+    that did not exist, passed every test here, and failed on its first live
+    connection. A double is only as good as its fidelity to the thing it
+    replaces.
+    """
 
     def __init__(self, messages: list[str]) -> None:
         self.queued = list(messages)
-        self.sent: list[bytes] = []
+        self.sent: list[bytes | str] = []
+        self.closed = asyncio.Event()
 
-    async def send(self, data: bytes) -> None:
+    async def send(self, data: bytes | str) -> None:
         self.sent.append(data)
+        # Deepgram closes the socket in response to CloseStream, and that is
+        # what ends the receive loop. A double that stops iterating as soon as
+        # its queue empties would let the adapter finish before it had sent
+        # anything, which is not a state a real connection can be in.
+        if isinstance(data, str) and "CloseStream" in data:
+            self.closed.set()
 
-    async def recv(self, timeout: float | None = None) -> str | None:
-        if not self.queued:
-            if timeout == 0:
-                raise TimeoutError
-            return None
-        return self.queued.pop(0)
+    def __aiter__(self) -> AsyncIterator[str]:
+        return self._messages()
+
+    async def _messages(self) -> AsyncIterator[str]:
+        while True:
+            if self.queued:
+                yield self.queued.pop(0)
+            elif self.closed.is_set():
+                return
+            else:
+                await asyncio.sleep(0)
 
     async def __aenter__(self) -> FakeSocket:
         return self
@@ -305,6 +326,45 @@ class TestDeepgram:
     async def test_a_key_is_required(self) -> None:
         with pytest.raises(ValueError, match="API key"):
             DeepgramSTTProvider(api_key="")
+
+    async def test_audio_is_sent_and_the_stream_is_finalised(self) -> None:
+        """The close frame is what makes a caller who stopped talking get an
+        answer instead of waiting for a server-side timeout."""
+        socket = FakeSocket([deepgram_message("hello", is_final=True)])
+        provider = DeepgramSTTProvider(api_key="k", connect=self._connect(socket))
+
+        [t async for t in provider.transcribe_stream(one_chunk())]
+
+        assert socket.sent[0] == b"\x00" * 640
+        assert json.loads(socket.sent[-1]) == {"type": "CloseStream"}
+
+    async def test_sending_and_receiving_overlap(self) -> None:
+        """Interim results must arrive while audio is still being sent.
+
+        This is the whole reason for streaming recognition over batch. A
+        serialised implementation -- send a chunk, poll for a reply, repeat --
+        still yields the right transcripts, so only the ordering catches it.
+        """
+        socket = FakeSocket(
+            [
+                deepgram_message("I need", is_final=False),
+                deepgram_message("I need an", is_final=False),
+            ]
+        )
+        sent_before_first_result: list[int] = []
+
+        async def slow_audio() -> AsyncIterator[bytes]:
+            for _ in range(3):
+                yield b"\x00" * 640
+                await asyncio.sleep(0)
+
+        provider = DeepgramSTTProvider(api_key="k", connect=self._connect(socket))
+        async for _transcript in provider.transcribe_stream(slow_audio()):
+            sent_before_first_result.append(len(socket.sent))
+            break
+
+        # A result was delivered without waiting for the audio to finish.
+        assert sent_before_first_result[0] < 4
 
 
 class TestElevenLabs:
