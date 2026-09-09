@@ -1,0 +1,49 @@
+# --- Secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# --- Node / Next.js ---
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+
+# --- Data / local infrastructure ---
+*.db
+*.sqlite
+*.sqlite3
+pgdata/
+hapi-data/
+synthetic-data/fhir/generated/
+synthetic-data/output/
+synthea/
+
+# --- Local usage / cost ledger (contains no PHI, but is machine-local) ---
+.local-usage/
+
+# --- Editors / OS ---
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
