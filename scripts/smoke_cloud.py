@@ -76,12 +76,15 @@ async def smoke_groq(settings: Settings) -> str:
         ledger=get_usage_ledger(),
         name="groq",
         supports_message_name=False,
+        reasoning_effort=settings.groq_reasoning_effort,
     )
     try:
         response = await provider.generate(
             LLMRequest(
                 messages=[ChatMessage(role="user", content=PROMPT)],
-                max_output_tokens=16,
+                # Generous enough that a reasoning model still has tokens left
+                # for an actual answer after it has finished thinking.
+                max_output_tokens=128,
                 session_id="smoke",
             )
         )

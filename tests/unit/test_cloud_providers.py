@@ -469,6 +469,24 @@ class TestGroqCompatibility:
         with pytest.raises(ProviderUnavailableError, match="rate limit"):
             await provider.generate(ASK)
 
+    async def test_reasoning_effort_is_sent_when_configured(self) -> None:
+        """gpt-oss models think before answering, on the output token budget.
+
+        Verified live: without this, a 16-token cap returned an empty message
+        that had spent all 16 tokens reasoning.
+        """
+        sent: dict[str, Any] = {}
+        provider = self._provider(self._capture(sent), reasoning_effort="low")
+        await provider.generate(ASK)
+        assert sent["reasoning_effort"] == "low"
+
+    async def test_reasoning_effort_is_absent_for_a_model_without_it(self) -> None:
+        """Sending it to a non-reasoning model is a 400, not a no-op."""
+        sent: dict[str, Any] = {}
+        provider = OpenAILLMProvider(api_key="k", client=openai_client(self._capture(sent)))
+        await provider.generate(ASK)
+        assert "reasoning_effort" not in sent
+
     async def test_errors_name_the_provider_that_failed(self) -> None:
         provider = self._provider(responder({}, status=401))
         with pytest.raises(ProviderUnavailableError) as caught:

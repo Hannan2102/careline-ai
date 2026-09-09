@@ -84,8 +84,12 @@ class Settings(BaseSettings):
     # Groq serves an OpenAI-compatible API, so it reuses that adapter with a
     # different base URL rather than needing one of its own.
     groq_api_key: str | None = None
-    groq_model: str = "llama-3.3-70b-versatile"
+    groq_model: str = "openai/gpt-oss-20b"
     groq_base_url: str = "https://api.groq.com/openai/v1"
+    #: gpt-oss models reason before answering, spending output tokens on it. At
+    #: "low" this extraction task answers in 130-500 ms; unset, a small token
+    #: cap can return an empty message that cost the whole budget.
+    groq_reasoning_effort: str | None = "low"
     deepgram_api_key: str | None = None
     deepgram_model: str = "nova-3"
     elevenlabs_api_key: str | None = None

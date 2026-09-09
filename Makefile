@@ -77,7 +77,7 @@ budget: ## Print estimated API spend and remaining budget
 	$(PY) scripts/budget_status.py
 
 smoke-cloud: ## ONE live paid call to verify a cloud adapter (costs money)
-	@echo "This spends real money. Requires PROVIDER=<openai|elevenlabs|deepgram>."
+	@echo "Contacts a real vendor. PROVIDER=<groq|openai|elevenlabs|deepgram>."
 	$(PY) scripts/smoke_cloud.py --provider $(PROVIDER) --confirm-spend
 
 clean: ## Remove caches and build artifacts

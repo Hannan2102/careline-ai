@@ -4,7 +4,7 @@
 
 ## Current phase
 
-**Phases 0–11 complete; Phase 12 is built but has never been run against a vendor.** The agent works end to end in text, at $0, what it does survives a restart, and the dashboard makes every turn inspectable. The cloud adapters exist and are tested against faked transports; the one thing left in Phase 12 is a single live smoke test, which needs an API key and a deliberate decision to spend.
+**Phases 0–12 complete.** The agent works end to end in text, what it does survives a restart, the dashboard makes every turn inspectable, and it can now reach a real model — verified live against Groq on 2026-09-09. Total spend to date: **$0.00**. Next: Phase 13 (LiveKit browser voice).
 
 ## Completed
 
@@ -131,7 +131,7 @@
   reach the dashboard), and ending a session wrote its *revoked* state over the row,
   erasing which patient the call had been about. Both fixed, both now covered
 
-**Phase 12 — Cloud provider integrations** 🟡
+**Phase 12 — Cloud provider integrations** ✅
 - `OpenAILLMProvider` (chat completions and tool calls), `DeepgramSTTProvider`
   (streaming), `ElevenLabsTTSProvider` (streaming) — over `httpx` and `websockets`
   rather than vendor SDKs
@@ -143,7 +143,13 @@
 - Tool-call validation with a bounded repair loop: no coercion, no partial execution, and
   a `patient_id` the model supplies is checked against the session's verified reference
 - `make smoke-cloud` is the only path that can spend money, and refuses four ways
-- **Not done:** the live smoke test. Nothing here has ever contacted a vendor.
+- Groq's free tier as an LLM provider: the same adapter with a different base URL, which
+  is the provider abstraction earning its keep
+- **Verified live** on 2026-09-09 against `openai/gpt-oss-20b`, at $0.00. Extraction runs
+  in 130–500 ms — inside the latency budget — and, given "The first one please", returns
+  nothing rather than inventing a patient. A local `llama3.2:3b` given the same input
+  fabricated `full_name: "John Doe", date_of_birth: "1990-05-15"`, which is why the
+  measurement was worth taking before trusting a model with verification inputs.
 
 ## What actually works — and how I know
 
@@ -230,6 +236,10 @@
 | Invalid tool arguments are rejected, never defaulted | `tests/unit/test_tool_call_validation.py` |
 | A patient id for someone else is refused, indistinguishably | `test_the_refusal_does_not_say_whether_the_patient_exists` |
 | The repair loop is bounded, per proposal | `TestRepair` |
+| Groq's rejection of `messages[].name` is handled, not discovered | `TestGroqCompatibility` |
+| `reasoning_effort` is sent to models that have it and no others | `test_reasoning_effort_is_absent_for_a_model_without_it` |
+| A rate limit degrades to the deterministic path instead of ending a call | `TestDegradingOnProviderFailure` |
+| A free provider is never blocked by a full budget ceiling | `test_a_full_ceiling_does_not_block_a_free_provider` |
 | Every dashboard endpoint, against data a real turn produced | `tests/integration/test_dashboard_api.py` |
 | The trace exposes every field of a turn record | `test_every_turn_field_is_present` |
 | Record operations are attributed to the turn that caused them | `test_operations_are_attributed_to_their_turn` |

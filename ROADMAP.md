@@ -197,16 +197,17 @@ turn's rows, which a regulated deployment would not accept for audit.
 
 ---
 
-### 🟡 Phase 12 — Cloud provider integrations
-`OpenAILLMProvider`, `DeepgramSTTProvider`, `ElevenLabsTTSProvider`.
+### ✅ Phase 12 — Cloud provider integrations
+`OpenAILLMProvider`, `DeepgramSTTProvider`, `ElevenLabsTTSProvider`. One adapter serves
+every OpenAI-compatible endpoint, so Groq's free tier is a settings entry rather than a
+fourth implementation.
 
 **Acceptance**
 - [x] Each implements its interface and reports usage
 - [x] Tool-call arguments validated; invalid output triggers repair/retry, never execution
 - [x] CI never invokes a paid API
-- First live smoke test costs < $0.25 and is logged in COSTS.md — **outstanding: needs an
-  API key and an explicit decision to spend. `make smoke-cloud` exists and refuses by
-  default.**
+- [x] First live smoke test costs < $0.25 and is logged in COSTS.md — run 2026-09-09
+      against Groq's free tier at **$0.00**
 
 ---
 

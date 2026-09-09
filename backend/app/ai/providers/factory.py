@@ -200,6 +200,7 @@ def build_llm_provider(
             ledger=usage,
             name="groq",
             supports_message_name=False,
+            reasoning_effort=resolved.groq_reasoning_effort,
         )
         logger.info("llm_provider_built", provider=groq.name, model=resolved.groq_model)
         # Wrapped anyway: the wrapper is what degrades to the deterministic

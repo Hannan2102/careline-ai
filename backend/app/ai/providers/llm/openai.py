@@ -57,6 +57,7 @@ class OpenAILLMProvider:
         client: httpx.AsyncClient | None = None,
         name: str = "openai",
         supports_message_name: bool = True,
+        reasoning_effort: str | None = None,
     ) -> None:
         if not api_key:
             # Reachable only by constructing the adapter directly; settings
@@ -69,6 +70,11 @@ class OpenAILLMProvider:
         #: one, so an unfiltered payload works until the first time a model
         #: gets its arguments wrong -- the worst moment to find out.
         self.supports_message_name = supports_message_name
+        #: Reasoning models spend output tokens thinking before they answer, so
+        #: a low cap can return an empty message that cost a full budget. Set
+        #: this for such a model; leave it None for one that has no such
+        #: parameter, which would reject it.
+        self.reasoning_effort = reasoning_effort
         # Credentials go on the request, not on the client. A client passed in
         # by a caller (a test, a shared pool) would otherwise carry no key, and
         # the adapter would look authenticated while sending nothing.
@@ -130,12 +136,15 @@ class OpenAILLMProvider:
 
     # -------------------------------------------------------------- internals
     def _payload(self, request: LLMRequest) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": [self._message(message) for message in request.messages],
             "max_completion_tokens": request.max_output_tokens,
             "temperature": request.temperature,
         }
+        if self.reasoning_effort is not None:
+            payload["reasoning_effort"] = self.reasoning_effort
+        return payload
 
     def _message(self, message: ChatMessage) -> dict[str, Any]:
         """One message, with fields this endpoint does not accept removed."""

@@ -138,9 +138,35 @@ Two consequences worth stating:
   into `RATES`.** Otherwise the ledger silently under-reports and the $20 ceiling stops
   meaning $20.
 
-Measured against the alternative: at demo volume the LLM is ~8% of a voice turn's cost,
-and $7 of OpenAI budget buys ~12,500 text turns. Groq's advantage here is latency and not
-needing a card, not the money.
+### Measured, 2026-09-09
+
+`openai/gpt-oss-20b` with `reasoning_effort=low`, on the actual extraction task:
+
+| Utterance | Latency | Extracted |
+|---|---|---|
+| "schedule a diabetes follow-up with Dr. Patel" | 496 ms | reason, practitioner |
+| "My name is John Smith and I was born 15 February 1985" | 133 ms | name, date of birth |
+| "The first one please" | 225 ms | *nothing* — correctly |
+| "yeah that works" | 315 ms | *nothing* — correctly |
+
+Inside the 200–800 ms budget for the LLM stage, and it declines to invent. A local
+`llama3.2:3b` given the same "The first one please" fabricated a full identity —
+`full_name: "John Doe", date_of_birth: "1990-05-15"` — which is the single worst place in
+this system to hallucinate, since those fields are the inputs to verification.
+
+`reasoning_effort` is not optional for these models. Unset, a 16-token output cap returned
+an **empty** message that had spent all 16 tokens thinking.
+
+At demo volume the LLM is ~8% of a voice turn's cost, and $7 of OpenAI budget buys ~12,500
+text turns. Groq's advantage here is latency and not needing a card, not the money.
+
+### Free STT is also available
+
+Groq serves `whisper-large-v3` and `whisper-large-v3-turbo`. That is the ~$4 Deepgram line
+of the component budget, potentially at zero — worth evaluating in Phase 13. The catch is
+that it is batch transcription, not a streaming socket, and the latency budget assumes
+recognition finalises *while the caller is still speaking*. Not a drop-in for
+`DeepgramSTTProvider`; a real evaluation, not a free win.
 
 ## Live smoke tests
 
@@ -181,7 +207,11 @@ paid API is used.
 
 | Date | Provider | Purpose | Est. cost | Project total |
 |---|---|---|---|---|
-| — | — | No paid API calls have been made | $0.00 | **$0.00** |
+| 2026-09-09 | Groq | Live smoke test, `openai/gpt-oss-20b` (76 in / 17 out) | $0.00 | **$0.00** |
+| 2026-09-09 | Groq | Extraction probe, 5 utterances (853 in / 262 out) | $0.00 | **$0.00** |
 
-Phase 12 added the adapters that *can* spend; nothing has been spent yet. The first live
-smoke test goes in this table with its measured cost, not an estimate.
+**Nothing billable has been spent.** Both entries are Groq's free tier: metered, priced at
+zero, rate-limited by the vendor. No OpenAI, Deepgram, or ElevenLabs call has ever been
+made from this repository.
+
+The first billable call will appear here with its *measured* cost, not an estimate.
