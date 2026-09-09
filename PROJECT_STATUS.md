@@ -4,7 +4,7 @@
 
 ## Current phase
 
-**Phase 3 complete.** Next: Phase 4 (appointment scheduling) — or Phase 8 (safety policies) first, so the safety layer exists before the agent can speak.
+**Phases 0–3 and 8 complete.** Next: Phase 4 (appointment scheduling workflow).
 
 ## Completed
 
@@ -49,6 +49,16 @@
   desk (Phase 8 adds the clinical policies)
 - `SessionStore` with TTL expiry, so a verified session cannot be inherited later
 
+**Phase 8 — Safety and escalation** ✅ *(built out of order, ahead of 4–7)*
+- Nine safety categories, each with a rule, a fixed route, a positive test and a
+  negative test
+- Urgent symptoms outrank everything: "chest pain — should I take more?" is an
+  emergency, not a dosing question
+- Refusal text is fixed, not generated, and checked to contain no medical content
+- `SafetyService` produces the structured handoff, preserving the patient's own words
+- Two asymmetric layers: deterministic rules and an optional model flag, where either
+  can refuse and neither can grant permission the other denied
+
 ## What actually works — and how I know
 
 | Capability | Verified by |
@@ -70,6 +80,13 @@
 | Every PHI operation refuses without verification | `TestPhiOperationsThroughTheGate` |
 | A model-supplied patient id for another patient is refused | `test_a_mismatched_patient_reference_is_refused` |
 | Ending or expiring a session revokes access | `test_ending_the_session_closes_the_gate` |
+| 33 unsafe utterances refused and correctly categorised | `test_unsafe_requests_are_refused_and_categorised` |
+| 16 ordinary requests **not** over-blocked | `test_ordinary_requests_are_allowed` |
+| No refusal contains medical content | `test_no_refusal_contains_medical_content` |
+| Six prompt-injection attempts change nothing | `test_conversation_text_cannot_disable_the_rules` |
+| A model flag cannot downgrade a deterministic refusal | `test_a_model_cannot_remove_a_deterministic_refusal` |
+| The Lisinopril/dizziness scenario yields a full handoff | `TestTheCanonicalScenario` |
+| Asking for a stored dosage stays allowed | `test_asking_for_a_stored_dosage_is_not_a_dose_change` |
 | Patient search: exact, unknown, ambiguous, wrong DOB | `tests/integration/test_memory_ehr_provider.py::TestPatientSearch` |
 | Booking with type-driven duration and slot consumption | `TestBooking` |
 | Double-booking refused; 5 concurrent bookings → exactly 1 winner | `test_concurrent_booking_of_one_slot_has_exactly_one_winner` |
@@ -88,8 +105,8 @@
 ## Last test results
 
 ```
-294 passed in 88.0s   (full suite, both EHR providers)
-202 passed in  2.6s   (offline suite: -m "not integration")
+422 passed in 75.0s   (full suite, both EHR providers)
+330 passed in  2.3s   (offline suite: -m "not integration")
 ```
 
 - The HAPI suite runs against a live FHIR 4.0.1 server via `make test-int`; it skips
@@ -113,6 +130,13 @@
 5. **Name + DOB remains weak authentication**, as SAFETY.md states. The second factor is
    requested only on ambiguity, not always — matching common clinic practice, not good
    security. A real deployment needs more.
+6. **Safety detection is phrase-based.** It will miss paraphrases no rule anticipates —
+   testing caught exactly that with "ending my life" against a literal "end my life", now
+   fixed with inflection-aware patterns. The model-flag layer exists to cover the gap, and
+   the honest position is that this needs clinical review, adversarial testing, and real
+   transcripts before anyone would trust it.
+7. **Nothing calls the classifier yet.** It runs before dispatch by construction once the
+   orchestrator exists (Phase 9).
 3. **The 15-minute slot grid rounds durations up.** A 20-minute visit occupies 30 minutes of
    grid. Documented in `docs/fhir-data-model.md`; a real template model would fix it.
 4. **No application database yet.** `session`, `turn`, `audit_event`, `escalation`,
@@ -125,11 +149,9 @@
 
 ## Next tasks
 
-1. **Phase 8 before Phase 4–7** — the safety policies. Everything from here adds
-   capability; the safety layer decides what the agent may do with it, and it should
-   exist before there is an agent to constrain.
-2. **Phase 4/5** — booking and appointment-management workflows over the services.
-3. **Phase 9 last of that group** — safety policies land before the agent can talk, so there is
+1. **Phase 4/5** — booking and appointment-management workflows over the services.
+2. **Phase 6/7** — medication lookup and refill-request workflows.
+3. **Phase 9** — safety policies land before the agent can talk, so there is
    never a build in which the agent answers a clinical question.
 
 ## Architecture decisions

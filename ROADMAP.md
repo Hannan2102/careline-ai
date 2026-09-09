@@ -110,15 +110,22 @@ Create a refill request pending clinician review.
 
 ---
 
-### ⬜ Phase 8 — Safety and escalation
-Deterministic policies and structured handoffs.
+### ✅ Phase 8 — Safety and escalation
+Deterministic policies and structured handoffs. Built ahead of Phases 4–7 so the safety
+layer exists before there is an agent to constrain.
 
 **Acceptance**
-- Every category in SAFETY.md has a policy, a unit test, and a fixed escalation route
-- Refusals carry no medical content
-- Handoffs capture patient, verification state, medication, concern, verbatim question,
-  the fact that no advice was given, destination, and priority
-- Policies evaluate before workflow dispatch and are not promptable
+- [x] Every category in SAFETY.md has a policy, a unit test, and a fixed escalation route
+      derived from the category rather than supplied
+- [x] Each category also has a **negative** test: over-blocking "when is my appointment?"
+      would make the product useless, so that is a failure mode too
+- [x] Refusals carry no medical content, enforced by `contains_medical_instruction`
+- [x] Handoffs capture patient, verification state, medication, concern, the question
+      **verbatim**, the fact that no advice was given, destination, and priority
+- [x] Policies are not promptable: six injection attempts are refused unchanged, and a
+      model flag may only *add* a refusal, never remove one
+- [ ] Policies evaluate before workflow dispatch — the classifier is built and ordered;
+      wiring it ahead of dispatch happens with the orchestrator in Phase 9
 
 ---
 
