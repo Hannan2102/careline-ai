@@ -23,6 +23,11 @@ db = [
     "aiosqlite>=0.20",
     "alembic>=1.14",
 ]
+# Only needed to run Deepgram streaming STT. Imported lazily, so the default
+# install, CI, and the whole test suite stay free of it.
+cloud = [
+    "websockets>=13",
+]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",

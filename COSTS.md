@@ -122,6 +122,25 @@ set in CI, and using it is a conscious act.
 The guard is a service consulted by the provider factory — not a decorator sprinkled on
 call sites — so a new provider cannot forget to check it.
 
+## Live smoke tests
+
+The adapters are tested against faked transports, which proves the adapter's own logic but
+not that the vendor agrees with it. One live call per provider closes that gap, and it is
+the only way to spend money in this repository:
+
+```bash
+make smoke-cloud PROVIDER=openai      # requires OPENAI_API_KEY
+```
+
+It refuses unless the provider is named explicitly, `--confirm-spend` is passed, a key is
+configured, and the budget guard allows it. Afterwards it prints the metered cost of that
+single call and persists the usage, so the next run counts it against the ceiling.
+
+Budgeted at **under $0.25 for the whole exercise** (ROADMAP Phase 12). The prompt is
+`"Reply with exactly: ok"` with a 16-token output cap; the TTS phrase is three words.
+Deepgram is reported as skipped rather than faked — a smoke test that transcribes silence
+proves only that a socket opened, and it would still be billed.
+
 ## Practices
 
 - Use text mode unless the thing under test is genuinely speech.
@@ -141,3 +160,6 @@ paid API is used.
 | Date | Provider | Purpose | Est. cost | Project total |
 |---|---|---|---|---|
 | — | — | No paid API calls have been made | $0.00 | **$0.00** |
+
+Phase 12 added the adapters that *can* spend; nothing has been spent yet. The first live
+smoke test goes in this table with its measured cost, not an estimate.

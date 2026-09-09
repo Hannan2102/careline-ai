@@ -6,7 +6,7 @@ PIP := uv pip install --python .venv/bin/python
 COMPOSE := docker compose
 
 .DEFAULT_GOAL := help
-.PHONY: help install up down logs reset seed wait-fhir dev chat dashboard dashboard-install dashboard-check test test-int lint fmt typecheck check budget clean
+.PHONY: help install up down logs reset seed wait-fhir dev chat dashboard dashboard-install dashboard-check test test-int lint fmt typecheck check budget smoke-cloud clean
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -15,6 +15,7 @@ help: ## Show this help
 install: ## Create the venv and install backend dependencies
 	uv venv --python 3.12 .venv
 	VIRTUAL_ENV=.venv $(PIP) -e ".[dev,db]"
+	@echo "Deepgram streaming also needs: uv pip install --python .venv/bin/python '.[cloud]'"
 	@echo "Done. Copy .env.example to .env, then run 'make dev'."
 
 up: ## Start PostgreSQL and HAPI FHIR (follow with 'make wait-fhir')
@@ -74,6 +75,10 @@ check: lint typecheck test ## Lint, type-check, and test
 
 budget: ## Print estimated API spend and remaining budget
 	$(PY) scripts/budget_status.py
+
+smoke-cloud: ## ONE live paid call to verify a cloud adapter (costs money)
+	@echo "This spends real money. Requires PROVIDER=<openai|elevenlabs|deepgram>."
+	$(PY) scripts/smoke_cloud.py --provider $(PROVIDER) --confirm-spend
 
 clean: ## Remove caches and build artifacts
 	rm -rf .pytest_cache .ruff_cache .mypy_cache dist build

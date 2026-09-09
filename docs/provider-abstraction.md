@@ -6,7 +6,8 @@ interface; only the factory imports an implementation.
 ```python
 class STTProvider(Protocol):
     name: str
-    async def transcribe_stream(self, audio: AsyncIterator[bytes]) -> AsyncIterator[Transcript]: ...
+    # Not `async def`: an async generator is a plain function returning an AsyncIterator.
+    def transcribe_stream(self, audio: AsyncIterator[bytes]) -> AsyncIterator[Transcript]: ...
 
 class LLMProvider(Protocol):
     name: str
@@ -15,16 +16,25 @@ class LLMProvider(Protocol):
 
 class TTSProvider(Protocol):
     name: str
-    async def synthesize_stream(self, text: str, voice: VoiceSpec) -> AsyncIterator[bytes]: ...
+    def synthesize_stream(self, text: str, voice: VoiceSpec) -> AsyncIterator[bytes]: ...
 ```
 
 ## Implementations
 
 | Kind | Cloud | Local (Phase 17) | Deterministic |
 |---|---|---|---|
-| STT | `DeepgramSTTProvider` | `WhisperSTTProvider` | `MockSTTProvider` |
-| LLM | `OpenAILLMProvider` | `OllamaLLMProvider` | `MockLLMProvider` |
-| TTS | `ElevenLabsTTSProvider` | `PiperTTSProvider` | `MockTTSProvider` |
+| STT | `DeepgramSTTProvider` ✅ | `WhisperSTTProvider` | `MockSTTProvider` ✅ |
+| LLM | `OpenAILLMProvider` ✅ | `OllamaLLMProvider` | `MockLLMProvider` ✅ |
+| TTS | `ElevenLabsTTSProvider` ✅ | `PiperTTSProvider` | `MockTTSProvider` ✅ |
+
+The cloud adapters talk to their vendors over `httpx` (and `websockets` for Deepgram
+streaming) rather than through vendor SDKs. The surface used is a handful of endpoints
+with a stable JSON shape; an SDK would add a dependency, its own retry and telemetry
+behaviour, and a second place for credentials to leak, in exchange for very little.
+
+Credentials are attached **per request**, never only to the client. An adapter handed a
+client by its caller would otherwise look authenticated while sending no key — which is
+exactly what happened the first time these were tested.
 
 Mock providers are first-class, not test doubles bolted on afterwards: they are what the
 test suite and default development mode use, so the interfaces stay honest.
@@ -35,7 +45,10 @@ test suite and default development mode use, so the interfaces stay honest.
 2. No `if provider == "openai"` anywhere in business logic.
 3. Every provider reports usage to the metering service — including mocks, which report
    zero cost, so the accounting path is exercised in tests.
-4. Every provider is constructed through the factory, which consults the budget guard.
+4. Every provider is constructed through the factory, which consults the budget guard —
+   and a paid provider is wrapped so the guard is consulted again before *every* call. A
+   provider is built once and used for a whole conversation, so a construction-time check
+   alone would let a long session run past the per-session ceiling.
 5. Provider-specific errors are translated into shared error types at the adapter boundary.
 
 ## Selection

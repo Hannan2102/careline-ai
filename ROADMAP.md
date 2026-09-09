@@ -197,14 +197,16 @@ turn's rows, which a regulated deployment would not accept for audit.
 
 ---
 
-### ⬜ Phase 12 — Cloud provider integrations
+### 🟡 Phase 12 — Cloud provider integrations
 `OpenAILLMProvider`, `DeepgramSTTProvider`, `ElevenLabsTTSProvider`.
 
 **Acceptance**
-- Each implements its interface and reports usage
-- Tool-call arguments validated; invalid output triggers repair/retry, never execution
-- CI never invokes a paid API
-- First live smoke test costs < $0.25 and is logged in COSTS.md
+- [x] Each implements its interface and reports usage
+- [x] Tool-call arguments validated; invalid output triggers repair/retry, never execution
+- [x] CI never invokes a paid API
+- First live smoke test costs < $0.25 and is logged in COSTS.md — **outstanding: needs an
+  API key and an explicit decision to spend. `make smoke-cloud` exists and refuses by
+  default.**
 
 ---
 

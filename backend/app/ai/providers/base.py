@@ -123,7 +123,11 @@ class ProviderBudgetBlockedError(ProviderError):
 class STTProvider(Protocol):
     name: str
 
-    async def transcribe_stream(self, audio: AsyncIterator[bytes]) -> AsyncIterator[Transcript]:
+    # Not `async def`: an async *generator* is a plain function returning an
+    # AsyncIterator. Declaring it `async def` makes the Protocol describe a
+    # coroutine yielding an iterator, which no implementation here satisfies --
+    # a mismatch nothing catches until something is type-checked against it.
+    def transcribe_stream(self, audio: AsyncIterator[bytes]) -> AsyncIterator[Transcript]:
         """Stream audio in, yield interim and final transcripts out."""
         ...
 
@@ -145,6 +149,6 @@ class LLMProvider(Protocol):
 class TTSProvider(Protocol):
     name: str
 
-    async def synthesize_stream(self, text: str, voice: VoiceSpec) -> AsyncIterator[bytes]:
+    def synthesize_stream(self, text: str, voice: VoiceSpec) -> AsyncIterator[bytes]:
         """Stream synthesised audio, starting at the first sentence boundary."""
         ...

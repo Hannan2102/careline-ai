@@ -4,7 +4,7 @@
 
 ## Current phase
 
-**Phases 0–11 complete.** The agent works end to end in text, at $0, what it does survives a restart, and the dashboard makes every turn inspectable. Next: Phase 12 (cloud AI providers — the first phase that can spend money).
+**Phases 0–11 complete; Phase 12 is built but has never been run against a vendor.** The agent works end to end in text, at $0, what it does survives a restart, and the dashboard makes every turn inspectable. The cloud adapters exist and are tested against faked transports; the one thing left in Phase 12 is a single live smoke test, which needs an API key and a deliberate decision to spend.
 
 ## Completed
 
@@ -131,6 +131,20 @@
   reach the dashboard), and ending a session wrote its *revoked* state over the row,
   erasing which patient the call had been about. Both fixed, both now covered
 
+**Phase 12 — Cloud provider integrations** 🟡
+- `OpenAILLMProvider` (chat completions and tool calls), `DeepgramSTTProvider`
+  (streaming), `ElevenLabsTTSProvider` (streaming) — over `httpx` and `websockets`
+  rather than vendor SDKs
+- A provider factory: the only module that imports a concrete provider, and the only
+  place a paid one can be constructed
+- Paid providers are wrapped so the budget guard is consulted before **every** call, not
+  only at construction — a provider is built once and used for a whole conversation
+- Blocking falls back to the mock and answers, rather than raising mid-conversation
+- Tool-call validation with a bounded repair loop: no coercion, no partial execution, and
+  a `patient_id` the model supplies is checked against the session's verified reference
+- `make smoke-cloud` is the only path that can spend money, and refuses four ways
+- **Not done:** the live smoke test. Nothing here has ever contacted a vendor.
+
 ## What actually works — and how I know
 
 | Capability | Verified by |
@@ -206,6 +220,16 @@
 | Override honoured in development, ignored in production | `TestOverride` |
 | Paid provider without a key fails at startup | `tests/unit/test_settings.py` |
 | `/health` and `/api/system/status` | `tests/integration/test_api.py` |
+| Each cloud adapter, driven against a faked transport | `tests/unit/test_cloud_providers.py` |
+| Usage metered from the vendor's own numbers, not estimated | `test_usage_comes_from_the_response_not_an_estimate` |
+| A transient 503 retries once; a 400 never does | `test_a_transient_failure_is_retried_once` |
+| A rejected key is reported without echoing it | `test_a_rejected_key_says_so_without_echoing_it` |
+| Unparseable tool arguments are dropped, never guessed at | `test_unparseable_arguments_are_dropped_not_guessed_at` |
+| `AI_MODE=mock` builds a mock even with a real key present | `test_mock_mode_cannot_build_a_paid_provider_even_with_a_key` |
+| The ceiling falls back mid-conversation and spends nothing | `TestPerCallGuard` |
+| Invalid tool arguments are rejected, never defaulted | `tests/unit/test_tool_call_validation.py` |
+| A patient id for someone else is refused, indistinguishably | `test_the_refusal_does_not_say_whether_the_patient_exists` |
+| The repair loop is bounded, per proposal | `TestRepair` |
 | Every dashboard endpoint, against data a real turn produced | `tests/integration/test_dashboard_api.py` |
 | The trace exposes every field of a turn record | `test_every_turn_field_is_present` |
 | Record operations are attributed to the turn that caused them | `test_operations_are_attributed_to_their_turn` |

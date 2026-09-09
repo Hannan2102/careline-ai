@@ -62,3 +62,43 @@ def test_warn_threshold_must_not_exceed_ceiling() -> None:
 def test_override_is_ignored_outside_development() -> None:
     assert _settings(budget_guard_override=True, app_env="production").override_permitted is False
     assert _settings(budget_guard_override=True, app_env="development").override_permitted is True
+
+
+class TestCloudProvidersCannotBeReachedInTests:
+    """Phase 12 adds adapters that can spend money. These are the tripwires.
+
+    CI runs with no credentials at all, so the belt is that nothing is
+    configured; the braces are that even a configured key cannot produce a
+    paid provider while ``AI_MODE=mock``.
+    """
+
+    def test_the_test_environment_has_no_credentials(self) -> None:
+        settings = Settings(_env_file=None, app_env="test")
+        assert settings.openai_api_key is None
+        assert settings.deepgram_api_key is None
+        assert settings.elevenlabs_api_key is None
+
+    def test_mock_mode_beats_a_configured_key(self) -> None:
+        settings = Settings(
+            _env_file=None,
+            app_env="test",
+            ai_mode="mock",
+            llm_provider="openai",
+            openai_api_key="sk-would-cost-money",
+        )
+        assert settings.llm_provider == "mock"
+        assert settings.can_spend_money is False
+
+    def test_text_only_mode_disables_both_audio_providers(self) -> None:
+        settings = Settings(
+            _env_file=None,
+            app_env="test",
+            text_only_mode=True,
+            stt_provider="deepgram",
+            tts_provider="elevenlabs",
+            deepgram_api_key="dg",
+            elevenlabs_api_key="el",
+        )
+        assert settings.stt_enabled is False
+        assert settings.tts_enabled is False
+        assert settings.can_spend_money is False
