@@ -19,7 +19,7 @@ Repo, structure, documentation, ADRs, env contract, tooling.
 
 ---
 
-### 🚧 Phase 1 — Local EHR foundation
+### ✅ Phase 1 — Local EHR foundation
 HAPI FHIR + PostgreSQL via Docker Compose, plus a no-Docker in-memory provider so the
 foundation is usable and testable on any machine.
 
@@ -31,8 +31,9 @@ foundation is usable and testable on any machine.
 - [x] Curated clinic, providers, and demo patients seedable into either provider
 - [x] FastAPI app exposes `GET /health` and `GET /api/system/status`
 - [x] Test suite green with no network access and no cost
-- [ ] Verified against a running HAPI server: `/fhir/metadata` responds, seed loads,
-      patient retrieval round-trips *(blocked: Docker not installed on this machine)*
+- [x] Verified against a running HAPI server: `/fhir/metadata` responds (FHIR 4.0.1),
+      984 resources seed, patient retrieval round-trips, booking/cancellation persist,
+      and the server refuses a double booking
 
 ---
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from types import TracebackType
 from typing import Any, Self
+from urllib.parse import urlparse
 
 import httpx
 
@@ -34,6 +35,7 @@ class FhirClient:
             base_url=self.base_url,
             timeout=timeout,
             headers={"Accept": FHIR_JSON, "Content-Type": FHIR_JSON},
+            verify=uses_tls(self.base_url),
         )
 
     async def __aenter__(self) -> Self:
@@ -143,6 +145,21 @@ class FhirClient:
         """Submit a transaction bundle to the server root."""
         response = await self._request("POST", "/", json=bundle)
         return dict(response.json()) if response.content else {}
+
+
+def uses_tls(base_url: str) -> bool:
+    """Whether this base URL will actually negotiate TLS.
+
+    httpx builds an SSL context when the client is constructed, regardless of
+    scheme, so a plain-HTTP connection to a local HAPI server would otherwise
+    fail on a machine whose CA trust store is broken -- a failure that has
+    nothing to do with the request being made.
+
+    Returning False for http:// skips loading a trust store that would never be
+    used. Certificate verification stays fully enabled for https://, which is
+    what the Epic adapter will use.
+    """
+    return urlparse(base_url).scheme == "https"
 
 
 def version_id(resource: FhirResource) -> str | None:

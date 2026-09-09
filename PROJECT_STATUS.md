@@ -1,10 +1,10 @@
 # Project status
 
-*Last updated: 2026-09-08*
+*Last updated: 2026-09-09*
 
 ## Current phase
 
-**Phase 1 — Local EHR foundation.** Phase 0 (architecture and repo) is complete.
+**Phase 1 complete.** Next: Phase 2 (domain services).
 
 ## Completed
 
@@ -16,7 +16,7 @@
 - Docker Compose (PostgreSQL + HAPI FHIR R4), backend Dockerfile, Makefile
 - GitHub Actions CI: ruff, ruff format, mypy strict, pytest — offline, mock-only
 
-**Phase 1 — Local EHR foundation** (mostly complete)
+**Phase 1 — Local EHR foundation** ✅
 - `EHRProvider` interface (ADR 001) with two complete implementations
 - `MemoryFHIRProvider` — in-process FHIR store, no Docker required
 - `LocalFHIRProvider` — HAPI FHIR over REST, with `If-Match` optimistic locking on slots
@@ -28,6 +28,7 @@
 - FastAPI app: `GET /health`, `GET /api/system/status`
 - Usage metering, pricing, and the budget guard
 - Structured logging with credential redaction and trace correlation
+- **Verified end to end against a running HAPI FHIR 4.0.1 server**
 
 ## What actually works — and how I know
 
@@ -51,24 +52,23 @@
 ## Last test results
 
 ```
-103 passed, 6 skipped, 2 warnings in 0.67s
+111 passed (offline suite)            0.6s
+  6 passed (HAPI integration suite)   6.3s
 ```
 
-- 6 skipped = HAPI integration tests, skipped because no FHIR server is reachable.
+- The HAPI suite runs against a live FHIR 4.0.1 server via `make test-int`; it skips
+  automatically when no server is reachable, so the default suite stays offline.
 - 2 warnings = third-party deprecations (starlette/anyio), not project code.
 - `ruff check` clean · `ruff format` clean · `mypy` strict clean across 40 source files.
 - Zero network calls, zero cost.
 
 ## Known problems and gaps
 
-1. **HAPI FHIR is unverified on this machine.** Docker is not installed here, so
-   `docker-compose.yml` and `LocalFHIRProvider` have **not** been run against a live
-   server. The compose file's YAML parses and the provider satisfies the interface and
-   type checks, but the Phase 1 acceptance criterion "verified against a running HAPI
-   server" is **not met**. `tests/integration/test_local_fhir_provider.py` exists and will
-   exercise it; it currently skips. This is the single most important thing to verify next.
-2. **`MemoryFHIRProvider` could drift from HAPI.** Mitigated by shared primitives, shared
-   mappings, and mirrored test assertions — but only running both proves it.
+1. **`MemoryFHIRProvider` could still drift from HAPI.** Both now pass mirrored
+   assertions, but the HAPI suite covers six scenarios against the in-memory provider's
+   thirty. Widening the shared contract is worthwhile before Phase 4 leans on scheduling.
+2. **Integration tests reseed HAPI per test.** Fast enough today (6.3 s for six tests)
+   because seeding is an idempotent upsert, but it will not scale as the suite grows.
 3. **The 15-minute slot grid rounds durations up.** A 20-minute visit occupies 30 minutes of
    grid. Documented in `docs/fhir-data-model.md`; a real template model would fix it.
 4. **No application database yet.** `session`, `turn`, `audit_event`, `escalation`,
@@ -81,12 +81,10 @@
 
 ## Next tasks
 
-1. Install Docker, run `make up && make wait-fhir`, confirm `/fhir/metadata`, seed HAPI,
-   and run `make test-int`. Close the open Phase 1 criterion.
-2. **Phase 2** — domain services (`patient_service`, `scheduling_service`,
+1. **Phase 2** — domain services (`patient_service`, `scheduling_service`,
    `medication_service`) over the EHR interface.
-3. **Phase 3** — verification service and session state.
-4. **Phase 8 before Phase 9** — safety policies land before the agent can talk, so there is
+2. **Phase 3** — verification service and session state.
+3. **Phase 8 before Phase 9** — safety policies land before the agent can talk, so there is
    never a build in which the agent answers a clinical question.
 
 ## Architecture decisions

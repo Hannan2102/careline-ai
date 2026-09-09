@@ -1,0 +1,42 @@
+# HAPI FHIR overrides, layered over the image's bundled application.yaml via
+# SPRING_CONFIG_ADDITIONAL_LOCATION (which adds to the defaults rather than
+# replacing them).
+#
+# Why a file instead of environment variables: spring.jpa.properties is bound as
+# a Map, and the bundled config writes its keys in flattened dotted form
+# (`hibernate.dialect:`). Overriding a map entry of that shape from an env var
+# did not take effect, which left Hibernate on the H2 dialect while talking to
+# PostgreSQL -- it emitted CLOB columns, a type PostgreSQL does not have, so the
+# Batch2 job tables silently failed to create and the server came up unhealthy
+# with a partial schema. A file makes the precedence unambiguous and is easier
+# to read than a wall of SPRING_* variables.
+
+spring:
+  datasource:
+    url: jdbc:postgresql://postgres:5432/hapi
+    username: careline
+    password: careline
+    driverClassName: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+
+  jpa:
+    properties:
+      # The image's own config states the dialect is auto-detected EXCEPT for
+      # PostgreSQL and H2, both of which must be named explicitly.
+      hibernate.dialect: ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgresDialect
+      # Schema generation is commented out in the bundled config (it defaults to
+      # an in-memory H2 that is recreated each boot). With a persistent database
+      # it must be enabled, or the schema is never fully created.
+      hibernate.hbm2ddl.auto: update
+      hibernate.search.enabled: false
+
+hapi:
+  fhir:
+    fhir_version: R4
+    # Curated demo resources use relative references between synthetic records.
+    allow_external_references: true
+    allow_placeholder_references: true
+    allow_multiple_delete: true
+    # Demo data changes constantly; never serve a stale search result.
+    reuse_cached_search_results_millis: 0

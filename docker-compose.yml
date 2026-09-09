@@ -38,18 +38,11 @@ services:
     ports:
       - "8080:8080"
     environment:
-      # FHIR R4, PostgreSQL-backed. Validation is left permissive for a demo;
-      # the adapter validates what actually matters (docs/fhir-data-model.md).
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/hapi
-      SPRING_DATASOURCE_USERNAME: careline
-      SPRING_DATASOURCE_PASSWORD: careline
-      SPRING_DATASOURCE_DRIVERCLASSNAME: org.postgresql.Driver
-      SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT: org.hibernate.dialect.PostgreSQLDialect
-      HAPI_FHIR_FHIR_VERSION: R4
-      HAPI_FHIR_ALLOW_EXTERNAL_REFERENCES: "true"
-      HAPI_FHIR_ALLOW_MULTIPLE_DELETE: "true"
-      HAPI_FHIR_ALLOW_PLACEHOLDER_REFERENCES: "true"
-      HAPI_FHIR_REUSE_CACHED_SEARCH_RESULTS_MILLIS: "0"
+      # Configuration lives in infra/hapi/application.yaml, layered over the
+      # image defaults. See that file for why it is not a set of SPRING_* vars.
+      SPRING_CONFIG_ADDITIONAL_LOCATION: file:///app/config/
+    volumes:
+      - ./infra/hapi/application.yaml:/app/config/application.yaml:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8080/fhir/metadata > /dev/null || exit 1"]
       interval: 10s
