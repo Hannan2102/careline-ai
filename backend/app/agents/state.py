@@ -95,6 +95,10 @@ class SessionState:
         #: mutate freely; it never carries authorisation.
         self.workflow_state: dict[str, object] = {}
 
+        #: Which workflow is mid-conversation, so a follow-up turn resumes it
+        #: rather than starting over. Carries no authority either.
+        self.active_workflow: str | None = None
+
     # ------------------------------------------------------------ read-only
     @property
     def verification(self) -> VerificationState:

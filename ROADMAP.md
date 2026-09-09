@@ -70,14 +70,19 @@ Session-scoped identity verification: name + DOB, secondary factor on ambiguity.
 
 ---
 
-### ⬜ Phase 4 — Appointment scheduling
-Slot search, appointment-type classification, provider selection, booking.
+### ✅ Phase 4 — Appointment scheduling
+Slot search, appointment-type classification, provider selection, booking — as an explicit
+multi-turn state machine (ADR 002).
 
 **Acceptance**
-- Type determines duration; slot must exist, be free, and fit the duration
-- Provider must be working; no double-booking; no conflicting patient appointment
-- Concurrent booking of one slot: exactly one succeeds
-- Booking mutates EHR state and is visible on re-read
+- [x] Type determines duration; slot must exist, be free, and fit the duration
+- [x] Provider must be working; no double-booking; no conflicting patient appointment
+- [x] Concurrent booking of one slot: exactly one succeeds — proved at the workflow level
+      as well as the EHR level, with the loser re-offered other times
+- [x] Booking mutates EHR state and is visible on re-read
+- [x] Booking is unreachable without verification, and the workflow has no field for a
+      caller-supplied patient reference at all
+- [x] A half-finished booking is JSON-serialisable and resumable
 
 ---
 

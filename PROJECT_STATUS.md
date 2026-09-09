@@ -4,7 +4,7 @@
 
 ## Current phase
 
-**Phases 0–3 and 8 complete.** Next: Phase 4 (appointment scheduling workflow).
+**Phases 0–4 and 8 complete.** Next: Phase 5 (appointment management).
 
 ## Completed
 
@@ -59,6 +59,15 @@
 - Two asymmetric layers: deterministic rules and an optional model flag, where either
   can refuse and neither can grant permission the other denied
 
+**Phase 4 — Appointment scheduling** ✅
+- `ExistingPatientBookingWorkflow` — seven named states, every transition tested
+- Takes **typed input**, not free text: turning an utterance into those fields is the
+  orchestrator's job (Phase 9), which is why every branch tests without a model
+- Handles ambiguity, lockout, unknown clinicians, rejected offers, declined
+  confirmations, a slot taken mid-conversation, and an unreachable EHR
+- Workflow memory is namespaced and JSON-serialisable, so a booking survives a
+  round trip to storage
+
 ## What actually works — and how I know
 
 | Capability | Verified by |
@@ -87,6 +96,13 @@
 | A model flag cannot downgrade a deterministic refusal | `test_a_model_cannot_remove_a_deterministic_refusal` |
 | The Lisinopril/dizziness scenario yields a full handoff | `TestTheCanonicalScenario` |
 | Asking for a stored dosage stays allowed | `test_asking_for_a_stored_dosage_is_not_a_dose_change` |
+| A full booking conversation, turn by turn | `TestHappyPath::test_a_full_booking_conversation` |
+| Two sessions confirming one slot → one booking, one re-offer | `test_two_sessions_confirming_the_same_slot_yield_one_booking` |
+| A slot taken mid-conversation re-offers rather than fails | `test_a_slot_taken_mid_conversation_is_handled_gracefully` |
+| Booking is unreachable before verification | `test_booking_cannot_start_without_identity` |
+| Wrong DOB and unknown name reprompt identically | `test_wrong_details_reprompt_without_revealing_anything` |
+| A half-finished booking survives serialisation | `test_a_half_finished_booking_is_serialisable` |
+| A clinical question mid-booking refuses and leaves it resumable | `TestSafetyComposition` |
 | Patient search: exact, unknown, ambiguous, wrong DOB | `tests/integration/test_memory_ehr_provider.py::TestPatientSearch` |
 | Booking with type-driven duration and slot consumption | `TestBooking` |
 | Double-booking refused; 5 concurrent bookings → exactly 1 winner | `test_concurrent_booking_of_one_slot_has_exactly_one_winner` |
@@ -105,8 +121,8 @@
 ## Last test results
 
 ```
-422 passed in 75.0s   (full suite, both EHR providers)
-330 passed in  2.3s   (offline suite: -m "not integration")
+465 passed in 98.8s   (full suite, both EHR providers)
+352 passed in  2.6s   (offline suite: -m "not integration")
 ```
 
 - The HAPI suite runs against a live FHIR 4.0.1 server via `make test-int`; it skips
@@ -149,7 +165,7 @@
 
 ## Next tasks
 
-1. **Phase 4/5** — booking and appointment-management workflows over the services.
+1. **Phase 5** — appointment lookup, cancellation, and rescheduling workflows.
 2. **Phase 6/7** — medication lookup and refill-request workflows.
 3. **Phase 9** — safety policies land before the agent can talk, so there is
    never a build in which the agent answers a clinical question.
