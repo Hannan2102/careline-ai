@@ -30,6 +30,19 @@ class Transcript(BaseModel):
 
     text: str
     is_final: bool
+    #: Whether the *speaker* has finished, as opposed to this segment being
+    #: settled.
+    #:
+    #: The two are not the same thing, and conflating them cuts callers off.
+    #: A recogniser finalises a segment whenever it stops expecting to revise
+    #: it -- which happens at every pause, including the one in the middle of
+    #: "my full name is ... Linda Nguyen". Ending the turn there answers half a
+    #: sentence. End-of-speech is a separate decision the recogniser makes with
+    #: its endpointer, and this is that decision.
+    #:
+    #: Defaults false, which for a provider that does not report it means the
+    #: silence timer decides, exactly as before.
+    speech_final: bool = False
     confidence: float | None = None
     audio_seconds: float = 0.0
 

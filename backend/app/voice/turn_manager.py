@@ -39,7 +39,14 @@ class TurnTimings:
     """
 
     #: Quiet after a final transcript before we treat the turn as over.
-    end_of_utterance: timedelta = timedelta(milliseconds=800)
+    #:
+    #: A fallback, not the main path. A recogniser that reports end-of-speech
+    #: ends the turn the moment it says so; this is what decides when nothing
+    #: ever says so. It is therefore generous on purpose: the cost of waiting
+    #: too long is a beat of dead air, and the cost of not waiting long enough
+    #: is answering half a sentence -- which is what 800 ms did to a caller
+    #: pausing in the middle of "my full name is ... Linda Nguyen".
+    end_of_utterance: timedelta = timedelta(milliseconds=1800)
     #: Quiet with nothing said at all before we re-prompt. Measured from the
     #: moment the caller could actually have started speaking -- the end of our
     #: own last utterance -- not from the last thing they said.
@@ -117,6 +124,9 @@ class TurnManager:
         self._last_final_at: datetime | None = None
         self._started_at: datetime | None = None
         self._prompted_for_silence = False
+        #: Set when the recogniser reports end-of-speech, so the next tick runs
+        #: the turn without waiting out the fallback timer.
+        self._utterance_ended = False
         #: Set when playback ends, cleared by the next tick, which re-anchors
         #: the silence timers to that moment.
         #:
@@ -181,6 +191,12 @@ class TurnManager:
 
         self._buffer.append(text)
         self._last_final_at = moment
+        # The recogniser says the caller has stopped talking, so there is
+        # nothing to wait for. Segments keep accumulating either way -- an
+        # utterance can arrive as several finals, and only the last carries
+        # end-of-speech -- so the buffer holds the whole sentence by now.
+        if transcript.speech_final:
+            self._utterance_ended = True
 
     async def tick(self, now: datetime | None = None) -> None:
         """Advance timers. The transport calls this on a regular beat."""
@@ -203,12 +219,16 @@ class TurnManager:
             await self.close(CloseReason.TIMEOUT)
             return
 
-        # A buffered utterance that has gone quiet is a finished utterance.
-        if (
-            self._buffer
-            and self._last_final_at is not None
-            and moment - self._last_final_at >= self.timings.end_of_utterance
+        # An utterance is finished when the recogniser says so, or -- for one
+        # that does not report end-of-speech -- when it has gone quiet.
+        if self._buffer and (
+            self._utterance_ended
+            or (
+                self._last_final_at is not None
+                and moment - self._last_final_at >= self.timings.end_of_utterance
+            )
         ):
+            self._utterance_ended = False
             await self._run_turn(moment)
             return
 

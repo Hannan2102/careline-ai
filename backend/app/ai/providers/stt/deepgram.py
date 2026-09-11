@@ -173,6 +173,12 @@ class DeepgramSTTProvider:
         return Transcript(
             text=text,
             is_final=bool(payload.get("is_final")),
+            # Deepgram's own end-of-speech decision, from its endpointer, and
+            # a different thing from `is_final`. `is_final` says this segment
+            # is settled; it is raised at every pause, so acting on it answers
+            # callers mid-sentence -- observed live as three turns in a row of
+            # "my full name is" with the name still to come.
+            speech_final=bool(payload.get("speech_final")),
             confidence=best.get("confidence"),
             audio_seconds=float(payload.get("duration") or 0.0),
         )

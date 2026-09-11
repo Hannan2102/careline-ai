@@ -33,6 +33,13 @@ def final(text: str) -> Transcript:
     return Transcript(text=text, is_final=True, confidence=0.95, audio_seconds=1.2)
 
 
+def ended(text: str) -> Transcript:
+    """A final that also carries the recogniser's end-of-speech decision."""
+    return Transcript(
+        text=text, is_final=True, speech_final=True, confidence=0.95, audio_seconds=1.2
+    )
+
+
 def interim(text: str) -> Transcript:
     return Transcript(text=text, is_final=False, confidence=0.4, audio_seconds=0.4)
 
@@ -106,8 +113,42 @@ class TestEndOfUtterance:
         await manager.on_transcript(
             final("I was born 15 February 1985"), now=T0 + timedelta(milliseconds=400)
         )
-        await manager.tick(now=T0 + timedelta(milliseconds=1400))
+        # Past the fallback window, which is now generous on purpose: without
+        # an end-of-speech signal the only safe assumption is that a caller
+        # who has paused may not have finished.
+        await manager.tick(now=T0 + timedelta(milliseconds=2400))
         assert manager.stats.turns == 1
+
+    async def test_end_of_speech_ends_the_turn_without_waiting(
+        self, manager: TurnManager, speaker: Speaker
+    ) -> None:
+        """The recogniser saying "they stopped" beats any timer.
+
+        Found live: the caller said "my full name is", paused to think, and was
+        answered three times before they could say the name. `is_final` marks a
+        *segment* as settled and is raised at every pause; `speech_final` is
+        the recogniser's end-of-speech decision, and only that one means the
+        sentence is over.
+        """
+        await manager.on_transcript(ended("Are you open on Saturday?"), now=T0)
+        await manager.tick(now=T0 + timedelta(milliseconds=100))
+        assert manager.stats.turns == 1, "waited on a timer despite end-of-speech"
+
+    async def test_a_pause_mid_sentence_does_not_end_the_turn(
+        self, manager: TurnManager, speaker: Speaker
+    ) -> None:
+        """The exact shape of the live failure, as a test."""
+        await manager.on_transcript(final("Yeah. My full name is"), now=T0)
+        await manager.tick(now=T0 + timedelta(milliseconds=900))
+        assert manager.stats.turns == 0, "answered a caller who was mid-sentence"
+
+        await manager.on_transcript(ended("Linda Nguyen"), now=T0 + timedelta(seconds=1))
+        await manager.tick(now=T0 + timedelta(milliseconds=1100))
+        assert manager.stats.turns == 1
+        # Both halves reached the orchestrator as one utterance, which is the
+        # point: the pause split the transcript, not the sentence.
+        started = [e.detail or "" for e in manager.stats.events if e.kind == "turn_started"]
+        assert started == ["Yeah. My full name is Linda Nguyen"]
 
     async def test_interim_transcripts_never_reach_the_orchestrator(
         self, manager: TurnManager, speaker: Speaker
