@@ -193,7 +193,14 @@ class TestSilence:
     async def test_continued_silence_closes_the_call(
         self, manager: TurnManager, speaker: Speaker
     ) -> None:
-        await manager.tick(now=T0 + timedelta(seconds=9))
+        await manager.tick(now=T0 + timedelta(seconds=9))  # "Are you still there?"
+        # `silence_close` runs from the end of the re-prompt, not from the same
+        # origin as `silence_prompt` -- which is what its docstring always
+        # claimed and what the caller experiences. The tick *after* playback is
+        # what re-anchors it, so it takes one beat; at the production rate that
+        # is 100 ms, and this test ticks at that rate rather than pretending
+        # the anchor is instant.
+        await manager.tick(now=T0 + timedelta(seconds=9, milliseconds=100))
         await manager.tick(now=T0 + timedelta(seconds=20))
         assert manager.state is VoiceState.CLOSED
         assert manager.close_reason is CloseReason.SILENCE
@@ -206,6 +213,112 @@ class TestSilence:
         await say(manager, "Sorry, I'm here. Where are you located?", T0 + timedelta(seconds=10))
         await manager.tick(now=T0 + timedelta(seconds=15))
         assert manager.state is not VoiceState.CLOSED
+
+
+class TestOurOwnSpeechIsNotTheCallersSilence:
+    """The agent talking is not the caller failing to talk.
+
+    Every other double in this file returns from `speak` instantly, so the
+    agent's utterances cost no clock time and the silence timers never see
+    them. That made the whole suite blind to the bug this class covers: a
+    sixteen-second list of appointment slots spent an eight-second silence
+    budget before the caller had heard the end of it, so the agent asked "are
+    you still there?" the moment it stopped talking and hung up on someone who
+    was never given a turn.
+    """
+
+    #: Characters per second of speech. A calm receptionist; the real offer
+    #: message measured ~16s against Groq, which this rate reproduces.
+    CHARS_PER_SECOND = 15.0
+
+    class RealTimeSpeaker:
+        """Speech that costs the clock what it would cost out loud."""
+
+        def __init__(self, rate: float) -> None:
+            self.said: list[str] = []
+            self.rate = rate
+            self.clock = T0
+
+        async def __call__(self, text: str) -> None:
+            self.said.append(text)
+            self.clock += timedelta(seconds=len(text) / self.rate)
+
+    @pytest.fixture
+    def slow_speaker(self) -> RealTimeSpeaker:
+        return self.RealTimeSpeaker(self.CHARS_PER_SECOND)
+
+    @pytest.fixture
+    def manager(self, orchestrator: Orchestrator, slow_speaker: RealTimeSpeaker) -> TurnManager:
+        session = SessionState(session_id="sess-slow", channel=SessionChannel.VOICE, created_at=T0)
+        turn_manager = TurnManager(session=session, orchestrator=orchestrator, speak=slow_speaker)
+        turn_manager.start(now=T0)
+        return turn_manager
+
+    async def _turn(
+        self, manager: TurnManager, speaker: RealTimeSpeaker, text: str, at: datetime
+    ) -> datetime:
+        """One exchange. Returns the moment the agent stopped speaking."""
+        await manager.on_transcript(final(text), now=at)
+        ended = at + manager.timings.end_of_utterance
+        speaker.clock = ended
+        await manager.tick(now=ended)
+        return speaker.clock
+
+    async def test_a_long_reply_does_not_spend_the_callers_silence_budget(
+        self, manager: TurnManager, slow_speaker: RealTimeSpeaker
+    ) -> None:
+        """The offer message is the first reply long enough to exceed both
+        thresholds on its own, which is why the call died exactly there."""
+        now = T0
+        for line in ["I need to book an appointment", "My name is John Smith", IDENTIFY]:
+            now = await self._turn(manager, slow_speaker, line, now)
+
+        offer = slow_speaker.said[-1]
+        spoken = len(offer) / self.CHARS_PER_SECOND
+        assert spoken > manager.timings.silence_prompt.total_seconds(), (
+            f"the offer is only {spoken:.1f}s; it no longer reproduces the case"
+        )
+
+        await manager.tick(now=now + timedelta(milliseconds=100))
+        assert manager.stats.silence_prompts == 0
+        assert manager.state is not VoiceState.CLOSED
+
+    async def test_the_caller_still_gets_the_full_window_after_a_long_reply(
+        self, manager: TurnManager, slow_speaker: RealTimeSpeaker
+    ) -> None:
+        """Not merely delayed -- the whole budget, counted from the end."""
+        now = T0
+        for line in ["I need to book an appointment", "My name is John Smith", IDENTIFY]:
+            now = await self._turn(manager, slow_speaker, line, now)
+
+        await manager.tick(now=now + timedelta(milliseconds=100))  # re-anchors here
+        anchor = now + timedelta(milliseconds=100)
+
+        await manager.tick(now=anchor + manager.timings.silence_prompt - timedelta(seconds=1))
+        assert manager.stats.silence_prompts == 0, "prompted a second early"
+
+        await manager.tick(now=anchor + manager.timings.silence_prompt)
+        assert manager.stats.silence_prompts == 1
+        assert slow_speaker.said[-1] == "Are you still there?"
+
+    async def test_a_genuinely_silent_caller_is_still_prompted_and_released(
+        self, manager: TurnManager, slow_speaker: RealTimeSpeaker
+    ) -> None:
+        """The fix must not make the agent wait forever on an empty line."""
+        now = await self._turn(manager, slow_speaker, "I need to book an appointment", T0)
+
+        await manager.tick(now=now + timedelta(milliseconds=100))
+        anchor = now + timedelta(milliseconds=100)
+        await manager.tick(now=anchor + manager.timings.silence_prompt)
+        assert manager.stats.silence_prompts == 1
+
+        prompt_ended = slow_speaker.clock
+        await manager.tick(now=prompt_ended + timedelta(milliseconds=100))
+        await manager.tick(
+            now=prompt_ended + timedelta(milliseconds=100) + manager.timings.silence_close
+        )
+        assert manager.state is VoiceState.CLOSED
+        assert manager.close_reason is CloseReason.SILENCE
 
     async def test_a_closed_call_ignores_everything_after(
         self, manager: TurnManager, speaker: Speaker

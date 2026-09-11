@@ -244,3 +244,97 @@ class TestInterruptSignal:
         await manager.close(CloseReason.CALLER_HUNG_UP)
         await say
         assert manager.state is VoiceState.CLOSED
+
+
+class TestPlayoutPacing:
+    """Sending audio at the rate it is heard.
+
+    Synthesis is roughly six times faster than speech: one slot offer measured
+    18.8 seconds of audio delivered in 3.0. Unpaced, that overran the browser's
+    playback buffer (heard as crackling) and left the server believing the
+    agent had fallen silent fifteen seconds early — so it started the silence
+    timer and asked "are you still there?" over its own voice.
+    """
+
+    @staticmethod
+    def _chunk(seconds: float) -> bytes:
+        from app.ai.providers.tts.groq import SAMPLE_RATE
+
+        return b"\x00\x00" * int(SAMPLE_RATE * seconds)
+
+    @pytest.mark.asyncio
+    async def test_the_first_chunks_go_out_immediately(self) -> None:
+        """Playback must start now, not after a lead-sized delay."""
+        playout = voice_ws._Playout(24000)
+        started = asyncio.get_running_loop().time()
+        await playout.pace(self._chunk(1.0))
+        assert asyncio.get_running_loop().time() - started < 0.05
+
+    @pytest.mark.asyncio
+    async def test_sending_is_held_back_once_it_runs_ahead(self) -> None:
+        """Four seconds of audio must take about four seconds to play out.
+
+        Sending finishes earlier than that by design — the pacer sleeps
+        *before* each chunk, so the last one leaves the transport a lead ahead
+        of the ear. What must hold is that sending plus draining matches real
+        time, which is the property the silence timer depends on.
+        """
+        playout = voice_ws._Playout(24000)
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        for _ in range(4):
+            await playout.pace(self._chunk(1.0))
+        sending = loop.time() - started
+        await playout.drain()
+        total = loop.time() - started
+
+        assert sending > 0.5, f"sent 4s of audio in {sending:.2f}s -- not paced at all"
+        assert sending <= 4.0 - voice_ws.PLAYOUT_LEAD_SECONDS + 0.3, (
+            f"sending took {sending:.2f}s; the lead is not being used"
+        )
+        assert 3.7 <= total <= 4.6, f"4s of audio played out in {total:.2f}s"
+
+    @pytest.mark.asyncio
+    async def test_drain_waits_out_the_audio_still_in_the_buffer(self) -> None:
+        """What stops the silence timer from starting mid-sentence."""
+        playout = voice_ws._Playout(24000)
+        await playout.pace(self._chunk(1.0))
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        await playout.drain()
+        waited = loop.time() - started
+        assert 0.7 <= waited <= 1.3, f"drained in {waited:.2f}s, expected ~1s"
+
+    @pytest.mark.asyncio
+    async def test_drain_is_idle_when_nothing_was_sent(self) -> None:
+        playout = voice_ws._Playout(24000)
+        started = asyncio.get_running_loop().time()
+        await playout.drain()
+        assert asyncio.get_running_loop().time() - started < 0.05
+
+    @pytest.mark.asyncio
+    async def test_a_reset_utterance_does_not_inherit_the_old_cursor(self) -> None:
+        """Barge-in resets the clock; otherwise the next reply is delayed by
+        however much audio the caller just talked over."""
+        playout = voice_ws._Playout(24000)
+        await playout.pace(self._chunk(5.0))
+        playout.reset()
+        started = asyncio.get_running_loop().time()
+        await playout.pace(self._chunk(1.0))
+        assert asyncio.get_running_loop().time() - started < 0.05
+
+    @pytest.mark.asyncio
+    async def test_a_stalled_utterance_resumes_without_catching_up(self) -> None:
+        """If playback has caught up, the cursor restarts from now.
+
+        Otherwise a pause mid-utterance would leave the cursor in the past and
+        the rest of the audio would be sent in one unpaced burst.
+        """
+        playout = voice_ws._Playout(24000)
+        await playout.pace(self._chunk(0.1))
+        await asyncio.sleep(0.3)  # playback overtakes the cursor
+        started = asyncio.get_running_loop().time()
+        await playout.pace(self._chunk(3.0))
+        await playout.drain()
+        waited = asyncio.get_running_loop().time() - started
+        assert waited >= 2.5, f"burst {waited:.2f}s of a 3s utterance"

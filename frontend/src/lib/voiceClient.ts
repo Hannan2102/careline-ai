@@ -41,18 +41,24 @@ export interface VoiceClientEvents {
   onClosed(reason: string): void;
 }
 
-/** How far ahead of the clock audio is scheduled, to absorb network jitter. */
-const PLAYOUT_LEAD_SECONDS = 0.08;
-
 export class VoiceClient {
   private socket: WebSocket | null = null;
   private capture: AudioContext | null = null;
   private playback: AudioContext | null = null;
   private stream: MediaStream | null = null;
   private worklet: AudioWorkletNode | null = null;
-  private sources = new Set<AudioBufferSourceNode>();
-  private nextStartAt = 0;
+  private player: AudioWorkletNode | null = null;
   private outputRate = 24000;
+  /**
+   * A trailing byte held over from the previous frame.
+   *
+   * The server streams bare PCM and the network breaks it wherever it likes:
+   * measured against Groq, 50 of 88 frames for one sentence had an *odd* byte
+   * count. A 16-bit sample split across two frames must be rejoined, not
+   * dropped — `new Int16Array(buffer)` throws outright on an odd length, which
+   * silently discarded half the audio and made the agent sound like static.
+   */
+  private carry: Uint8Array | null = null;
 
   /** Whether the browser actually applied echo cancellation to the mic. */
   echoCancellationApplied = false;
@@ -79,6 +85,7 @@ export class VoiceClient {
     this.flushPlayback();
     this.worklet?.port.close();
     this.worklet?.disconnect();
+    this.player?.disconnect();
     this.stream?.getTracks().forEach((track) => track.stop());
     await this.capture?.close().catch(() => undefined);
     await this.playback?.close().catch(() => undefined);
@@ -88,6 +95,8 @@ export class VoiceClient {
     this.playback = null;
     this.stream = null;
     this.worklet = null;
+    this.player = null;
+    this.carry = null;
   }
 
   // ------------------------------------------------------------- microphone
@@ -154,7 +163,7 @@ export class VoiceClient {
     switch (message.type) {
       case "ready":
         this.outputRate = Number(message.output_sample_rate) || 24000;
-        this.playback = new AudioContext({ sampleRate: this.outputRate });
+        void this.openPlayback();
         this.events.onStatus("listening");
         return;
       case "transcript":
@@ -177,47 +186,61 @@ export class VoiceClient {
   }
 
   // --------------------------------------------------------------- playback
-  private enqueue(pcm: ArrayBuffer): void {
-    const context = this.playback;
-    if (!context || pcm.byteLength < 2) return;
+  private async openPlayback(): Promise<void> {
+    this.playback = new AudioContext({ sampleRate: this.outputRate });
+    await this.playback.audioWorklet.addModule("/player-worklet.js");
+    this.player = new AudioWorkletNode(this.playback, "player-processor");
+    this.player.connect(this.playback.destination);
+    this.player.port.onmessage = (event: MessageEvent<{ type: string }>) => {
+      if (event.data.type === "empty") {
+        this.events.onStatus("listening");
+      } else if (event.data.type === "overrun") {
+        // The playback buffer lapped itself: audio was dropped and the caller
+        // heard it break up. Surfaced rather than swallowed, because silent
+        // corruption here is indistinguishable from a bad voice model.
+        this.events.onStatus("error", "Audio buffer overran — playback was dropped.");
+      }
+    };
+  }
 
-    // 16-bit signed PCM, headerless: the server strips the WAV container, so
-    // the sample rate is the one it named in `ready` and not one carried here.
-    const samples = new Int16Array(pcm);
-    const buffer = context.createBuffer(1, samples.length, this.outputRate);
-    const channel = buffer.getChannelData(0);
+  private enqueue(pcm: ArrayBuffer): void {
+    if (!this.player) return;
+
+    // Rejoin a sample split across two network frames before doing anything
+    // else. Without this the odd-length frames throw and are dropped, and the
+    // ones that survive are shifted by a byte — which is static, not speech.
+    let bytes = new Uint8Array(pcm);
+    if (this.carry) {
+      const joined = new Uint8Array(this.carry.length + bytes.length);
+      joined.set(this.carry, 0);
+      joined.set(bytes, this.carry.length);
+      bytes = joined;
+      this.carry = null;
+    }
+    if (bytes.length % 2 === 1) {
+      this.carry = bytes.slice(bytes.length - 1);
+      bytes = bytes.subarray(0, bytes.length - 1);
+    }
+    if (bytes.length === 0) return;
+
+    // `bytes` may be a view at a non-even offset into its buffer, which
+    // `Int16Array` refuses to wrap. Reading through a DataView sidesteps
+    // alignment entirely, and little-endian is what the server sends.
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.length);
+    const samples = new Float32Array(bytes.length / 2);
     for (let i = 0; i < samples.length; i += 1) {
-      channel[i] = samples[i]! / 0x8000;
+      samples[i] = view.getInt16(i * 2, true) / 0x8000;
     }
 
-    const source = context.createBufferSource();
-    source.buffer = buffer;
-    source.connect(context.destination);
-
-    // Scheduled against a running cursor rather than "now", so consecutive
-    // chunks butt up against each other. Starting each one at `currentTime`
-    // would overlap them into noise.
-    const startAt = Math.max(context.currentTime + PLAYOUT_LEAD_SECONDS, this.nextStartAt);
-    source.start(startAt);
-    this.nextStartAt = startAt + buffer.duration;
-
-    this.sources.add(source);
-    source.onended = () => this.sources.delete(source);
+    this.player.port.postMessage({ type: "samples", samples }, [samples.buffer]);
     this.events.onStatus("speaking");
   }
 
   private flushPlayback(): void {
-    for (const source of this.sources) {
-      try {
-        source.stop();
-      } catch {
-        // Already finished. Stopping a stopped source throws; nothing to do.
-      }
-    }
-    this.sources.clear();
-    // Reset the cursor too: leaving it in the future would silently delay the
-    // agent's *next* reply by however much audio was just discarded.
-    this.nextStartAt = 0;
+    // A pointer reset on the audio thread: instant, and with no per-chunk
+    // bookkeeping that could be left half-undone.
+    this.carry = null;
+    this.player?.port.postMessage({ type: "flush" });
   }
 }
 

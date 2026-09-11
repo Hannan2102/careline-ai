@@ -40,10 +40,15 @@ class TurnTimings:
 
     #: Quiet after a final transcript before we treat the turn as over.
     end_of_utterance: timedelta = timedelta(milliseconds=800)
-    #: Quiet with nothing said at all before we re-prompt.
+    #: Quiet with nothing said at all before we re-prompt. Measured from the
+    #: moment the caller could actually have started speaking -- the end of our
+    #: own last utterance -- not from the last thing they said.
     silence_prompt: timedelta = timedelta(seconds=8)
-    #: Quiet after re-prompting before we offer a human and close.
-    silence_close: timedelta = timedelta(seconds=16)
+    #: Quiet after re-prompting before we offer a human and close. Measured
+    #: from the end of the re-prompt, which is what it has always claimed to
+    #: mean; it used to be measured from the same origin as `silence_prompt`,
+    #: making it a total rather than a follow-on.
+    silence_close: timedelta = timedelta(seconds=10)
     #: Total call length, whatever is happening.
     max_call: timedelta = timedelta(minutes=10)
     #: Speech shorter than this during playback is treated as a noise, not an
@@ -105,6 +110,15 @@ class TurnManager:
         self._last_final_at: datetime | None = None
         self._started_at: datetime | None = None
         self._prompted_for_silence = False
+        #: Set when playback ends, cleared by the next tick, which re-anchors
+        #: the silence timers to that moment.
+        #:
+        #: A flag rather than a timestamp because this module is not allowed to
+        #: read the clock: the time playback ended is only knowable to whoever
+        #: supplies `now`, and the next tick is the first thing to know it. In
+        #: production that lands within one tick (100 ms); in a test it is
+        #: exactly the injected moment.
+        self._reanchor_silence = False
         self._playback: asyncio.Task[None] | None = None
         #: One in-flight turn per session. A second concurrent turn would let
         #: two workflows mutate the same session, which is how a caller ends
@@ -142,6 +156,9 @@ class TurnManager:
 
         self._last_voice_at = moment
         self._prompted_for_silence = False
+        # The caller has spoken, so their own timing is the anchor; a pending
+        # re-anchor from the utterance they are talking over must not move it.
+        self._reanchor_silence = False
 
         # Barge-in is decided on *any* speech, interim included: waiting for a
         # final would mean talking over the caller for the length of their
@@ -163,6 +180,16 @@ class TurnManager:
         if self.state is VoiceState.CLOSED:
             return
         moment = now or datetime.now(UTC)
+
+        # Playback finished since the last tick, so the caller's chance to
+        # speak starts now. Without this the agent's own speaking time counts
+        # as the caller's silence: a sixteen-second list of appointment slots
+        # exhausts an eight-second budget before the caller has heard the end
+        # of it, and the agent asks "are you still there?" the instant it stops
+        # talking -- then hangs up on someone who was never given a turn.
+        if self._reanchor_silence:
+            self._reanchor_silence = False
+            self._last_voice_at = moment
 
         if self._started_at is not None and moment - self._started_at >= self.timings.max_call:
             await self._say("We've reached the time limit for this call. Goodbye.")
@@ -250,6 +277,10 @@ class TurnManager:
             self._playback = None
             if self.state is VoiceState.SPEAKING:
                 self.state = VoiceState.LISTENING
+            # In the `finally`, so a barge-in re-anchors too: the caller who
+            # interrupted is owed a full window from where we stopped, not
+            # from whenever they last managed to finish a sentence.
+            self._reanchor_silence = True
 
     async def _barge_in(self) -> None:
         self.stats.barge_ins += 1

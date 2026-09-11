@@ -58,6 +58,19 @@ router = APIRouter(tags=["voice"])
 #: that buffers a growing delay and calls it working.
 AUDIO_QUEUE_FRAMES = 100
 
+#: How far ahead of the caller's ear the transport is allowed to get.
+#:
+#: Synthesis runs about six times faster than speech, so an unpaced transport
+#: pushes a whole utterance to the browser in a fraction of its duration. That
+#: overruns the client's playback buffer -- which sounds like crackling -- and
+#: leaves the server believing the agent finished talking long before it did.
+#: Sending at roughly the rate it is heard fixes both, and costs nothing: the
+#: caller cannot listen faster than real time either way.
+#:
+#: The lead absorbs network jitter. Too small and playback stutters; too large
+#: and it is the unpaced case again.
+PLAYOUT_LEAD_SECONDS = 1.5
+
 
 @router.websocket("/ws/voice")
 async def voice_socket(websocket: WebSocket) -> None:
@@ -97,12 +110,21 @@ async def voice_socket(websocket: WebSocket) -> None:
     send_lock = asyncio.Lock()
     audio: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=AUDIO_QUEUE_FRAMES)
 
+    playout = _Playout(OUTPUT_SAMPLE_RATE)
+
     async def audio_out(chunk: bytes) -> None:
+        await playout.pace(chunk)
         async with send_lock:
             if websocket.client_state is WebSocketState.CONNECTED:
                 await websocket.send_bytes(chunk)
 
+    async def drain() -> None:
+        await playout.drain()
+
     async def on_interrupt() -> None:
+        # Reset before telling the client, so the next utterance starts its
+        # own clock rather than inheriting the cursor of the one abandoned.
+        playout.reset()
         await _send_json(websocket, send_lock, {"type": "interrupt"})
 
     async def on_close(reason: CloseReason) -> None:
@@ -132,6 +154,7 @@ async def voice_socket(websocket: WebSocket) -> None:
         guard=BudgetGuard(settings, ledger),
         on_close=on_close,
         on_interrupt=on_interrupt,
+        drain=drain,
     )
 
     await _send_json(
@@ -263,3 +286,47 @@ class _TranscriptRelay:
         async for transcript in self._inner.transcribe_stream(audio):
             await self._relay(transcript)
             yield transcript
+
+
+class _Playout:
+    """Paces outgoing audio to the rate it is actually heard.
+
+    Keeps a cursor at the moment the audio sent so far will finish playing.
+    Sending is allowed to run ahead of that by ``PLAYOUT_LEAD_SECONDS`` and no
+    further, which bounds both the client's buffer and the error in the
+    server's belief about when the agent stopped talking.
+
+    Deliberately not a wall-clock sleep of the whole utterance: chunks must
+    keep flowing so that playback starts immediately and a barge-in can cut in
+    part-way through.
+    """
+
+    def __init__(self, sample_rate: int) -> None:
+        self.sample_rate = sample_rate
+        self._plays_until: float | None = None
+
+    def _now(self) -> float:
+        return asyncio.get_running_loop().time()
+
+    def reset(self) -> None:
+        self._plays_until = None
+
+    async def pace(self, chunk: bytes) -> None:
+        seconds = len(chunk) / (self.sample_rate * 2)
+        now = self._now()
+        if self._plays_until is None or self._plays_until < now:
+            # First chunk of an utterance, or playback has caught up with us.
+            self._plays_until = now
+        ahead = self._plays_until - now
+        if ahead > PLAYOUT_LEAD_SECONDS:
+            await asyncio.sleep(ahead - PLAYOUT_LEAD_SECONDS)
+        self._plays_until += seconds
+
+    async def drain(self) -> None:
+        """Wait out the audio still in the client's buffer."""
+        if self._plays_until is None:
+            return
+        remaining = self._plays_until - self._now()
+        self._plays_until = None
+        if remaining > 0:
+            await asyncio.sleep(remaining)

@@ -57,6 +57,7 @@ class VoiceSession:
         timings: TurnTimings | None = None,
         on_close: Callable[[CloseReason], Awaitable[None]] | None = None,
         on_interrupt: Callable[[], Awaitable[None]] | None = None,
+        drain: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self.session = session
         self.stt = stt
@@ -65,6 +66,16 @@ class VoiceSession:
         self.guard = guard
         self.voice = voice or VoiceSpec()
         self.budget_exhausted = False
+        #: Waits until emitted audio has actually been *heard*.
+        #:
+        #: Synthesis is far faster than speech: Groq returns 18 seconds of
+        #: audio in 3. Without this, ``_speak`` returns when the last byte was
+        #: sent rather than when the caller finished hearing it, so the session
+        #: believes the agent fell silent fifteen seconds early -- and starts
+        #: the silence timer, asking "are you still there?" over its own voice.
+        #: A transport that plays in real time supplies this; a test that
+        #: counts bytes does not need it.
+        self.drain = drain
 
         self.manager = TurnManager(
             session=session,
@@ -140,3 +151,8 @@ class VoiceSession:
     async def _emit(self, text: str) -> None:
         async for chunk in self.tts.synthesize_stream(text, self.voice):
             await self.audio_out(chunk)
+        if self.drain is not None:
+            # Cancelled by barge-in along with the rest of the speak task,
+            # which is what makes an interruption immediate rather than
+            # waiting out audio the caller has already talked over.
+            await self.drain()
