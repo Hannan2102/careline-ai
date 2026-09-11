@@ -31,6 +31,7 @@ yarn-error.log*
 
 # --- Data / local infrastructure ---
 *.db
+*.db.*
 *.sqlite
 *.sqlite3
 pgdata/
