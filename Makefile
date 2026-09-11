@@ -6,7 +6,7 @@ PIP := uv pip install --python .venv/bin/python
 COMPOSE := docker compose
 
 .DEFAULT_GOAL := help
-.PHONY: help install up down logs reset seed wait-fhir dev chat dashboard dashboard-install dashboard-check test test-int lint fmt typecheck check budget smoke-cloud smoke-voice voice clean
+.PHONY: help install up down logs reset seed wait-fhir dev chat dashboard dashboard-install dashboard-check test test-int lint fmt typecheck check budget smoke-cloud smoke-voice measure-tts voice clean
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -79,6 +79,10 @@ budget: ## Print estimated API spend and remaining budget
 voice: ## Run the API and dashboard configured for voice in the browser
 	@echo "Backend: make dev   Dashboard: make dashboard   then open /voice"
 	@echo "Needs TEXT_ONLY_MODE=false, STT_ENABLED=true, TTS_ENABLED=true in .env."
+
+measure-tts: ## Time to first audio from the live speech provider (a few cents)
+	@echo "Phase 14 before/after. Add ARGS=--rest to compare against the REST path."
+	TEXT_ONLY_MODE=false TTS_ENABLED=true $(PY) scripts/measure_tts.py $(ARGS)
 
 smoke-voice: ## Drive one whole voice call and save the audio to listen to (free)
 	@echo "Scripted speech in, real Groq speech out. Play smoke_voice.wav afterwards."

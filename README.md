@@ -77,7 +77,7 @@ Twilio path: **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
 ## Current status
 
-**Phases 0–13 of 18 complete; Phase 14 in progress.** See
+**Phases 0–14 of 18 complete.** See
 [PROJECT_STATUS.md](PROJECT_STATUS.md) for the authoritative, continuously-updated
 status, and [ROADMAP.md](ROADMAP.md) for phase acceptance criteria.
 
@@ -90,8 +90,9 @@ Working today, end to end in text **and by voice from a browser microphone**:
 - Booking, rescheduling, cancellation, medication lookup, refill requests, insurance
   cover, clinic FAQ
 - A safety layer that refuses clinical questions and escalates them with context
-- Voice over a WebSocket: Deepgram streaming recognition in, Deepgram Aura speech out,
-  barge-in, silence handling, and a spending cap enforced *during* the call
+- Voice over a WebSocket: Deepgram streaming recognition in, Deepgram Aura speech out
+  over a socket held open for the call, barge-in, silence handling, and a spending cap
+  enforced *during* the call. Perceived turn latency **0.38 s** median
 - Understanding by model with rules as the floor (ADR 008): the model classifies, and
   deterministic Python decides, reads records, and writes every word the caller hears
 - An agent runtime with a full per-turn trace, and a text CLI (`make chat`)

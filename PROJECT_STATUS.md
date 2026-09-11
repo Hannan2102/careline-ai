@@ -4,7 +4,7 @@
 
 ## Current phase
 
-**Phases 0–13 complete. Phase 14 (latency) measured and part-done.** The agent works end
+**Phases 0–14 complete.** The agent works end
 to end in text and by voice from a browser microphone, against real Deepgram recognition
 and real Groq inference. What it does survives a restart, the dashboard makes every turn
 inspectable, and the model now understands the whole conversation rather than only its
@@ -229,6 +229,27 @@ call was a one-millisecond turn.
   opens in silence leaves the caller guessing, and the ones who guess wrong open with
   "hello?", which carries no intent
 
+**Phase 14 — Latency** ✅
+- Baseline from 148 recorded voice turns: perceived turn **0.38 s** median, STT
+  recognition lag 18 ms, safety and routing 5 ms — and speech synthesis **375 ms**, which
+  was most of the turn and the only stage outside its budget
+- One optimisation, because the measurement named one: synthesis moved to a websocket
+  **held open for the call**, measured at **130 ms** to first audio against REST's 445 ms
+  (docs/latency.md). Reproduce with `make measure-tts ARGS="--ab --gap 7"`
+- The method mattered more than the change, and it caught two of my own errors. A
+  comparison taken twenty minutes apart showed a 2.6× win that was mostly the network
+  being in a different mood — interleaving the paths in one session is what made the
+  numbers mean anything. And with no pause between utterances the socket showed *no
+  improvement at all*: a caller speaks for seconds between replies, httpx expires an idle
+  connection after five, so a tight benchmark loop measures a warm connection pool that
+  no real call has. The fix was to put the gap into the benchmark
+- What it is not: raising the HTTP keepalive alone recovers about 110 ms of the 315,
+  which is real and far cheaper — but it cannot hold open a connection the server is
+  entitled to close, so the socket is opened once and kept
+- A held connection brings its own hazard, which is barge-in: an interrupted utterance
+  leaves audio queued that nobody read, so the socket is discarded rather than allowed to
+  play the interrupted sentence into the middle of the next one
+
 ## What actually works — and how I know
 
 | Capability | Verified by |
@@ -356,6 +377,10 @@ call was a one-millisecond turn.
 | The same sentence is never said three times | `TestSayingTheSameThingTwice` |
 | Changing the subject mid-flow is the model's call alone | `TestChangingTheSubject` |
 | The agent greets the caller, and the silence timer starts after it | `TestSpeakingFirst` |
+| Speech streams over one socket for the whole call | `TestTheWebsocketPath` |
+| An interrupted utterance never leaks into the next one | `test_an_abandoned_utterance_does_not_leak_into_the_next` |
+| A socket that will not open falls back to REST rather than silence | `test_a_socket_that_will_not_open_falls_back_to_rest` |
+| A vendor error frame is not mistaken for a successful ending | `test_an_error_frame_is_not_a_silent_ending` |
 | An abbreviated month is a date, not a name | `TestADateIsNotAName` |
 
 **Verified live on 2026-09-09**, over the real WebSocket against real Deepgram and real
@@ -367,7 +392,7 @@ pipeline itself contributes roughly 270–400 ms.
 **Not yet verified:** capture from an actual browser microphone. Everything above it is
 exercised; the `AudioWorklet` path and `getUserMedia`'s echo cancellation are not.
 
-**One real finding, for Phase 14.** A date of birth split across two finals — "I was born
+**One real finding, taken forward into Phase 14.** A date of birth split across two finals — "I was born
 on the fourteenth of March nineteen" then "seventy eight" — because Deepgram's
 `endpointing=300` finalised mid-number and the halves arrived ~1.1 s apart, wider than the
 800 ms window that would have joined them. Verification therefore never completed. This is
@@ -480,17 +505,17 @@ Try it: `python scripts/text_chat.py --script demo1 --trace`
 
 ## Next tasks
 
-1. **Phase 14 — latency.** Baseline measured: median perceived turn **0.38 s**, of which
-   TTS first-audio is **353 ms median** — about 93% of it, and the only stage outside its
-   budget. Deepgram's streaming synthesis websocket is the identified lever; the phase
-   closes on one optimisation with a before/after.
-2. **Deepgram keyword boosting** for the patient roster and the drug names. "Linda
+1. **Deepgram keyword boosting** for the patient roster and the drug names. "Linda
    Newhan", "Fifth John Smith" and "metamorphine" are all recognition errors that every
    layer downstream then has to be robust to, and boosting is the fix at the source.
-3. **Deepgram splitting an utterance mid-sentence** — "Can you tell me how much" /
+2. **Deepgram splitting an utterance mid-sentence** — "Can you tell me how much" /
    "metamorphine should I take?" arrived as two turns, and the safety layer then refused
    the fragment. Endpointing is a tuning trade-off and tuning without measurement is
    guessing.
+3. **The first utterance of a call still pays 377 ms** to open the speech socket, and it
+   is the greeting. Connecting when the call is answered rather than when the agent first
+   speaks would hide it; the greeting is also the least latency-sensitive moment in a
+   call, which is why it has not been done yet.
 4. Phases 15–18: Twilio telephony, the Epic sandbox adapter, the local-model path, and
    the polished demo.
 

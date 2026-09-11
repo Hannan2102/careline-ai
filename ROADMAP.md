@@ -264,18 +264,26 @@ one-millisecond turns.
 
 ---
 
-### 🟡 Phase 14 — Latency optimisation
+### ✅ Phase 14 — Latency optimisation
 Measure, then optimise.
 
 **Acceptance**
 - [x] Per-stage latency recorded for every turn and visible in the dashboard
-- [x] Median perceived turn latency within 0.8–2.0 s on the demo scenarios — measured at
-      **0.38 s** median
-- [ ] Each optimisation references a before/after measurement
+- [x] Median perceived turn latency within 0.8–2.0 s on the demo scenarios — **0.38 s**
+- [x] Each optimisation references a before/after measurement
 
-The baseline says where the work is: TTS first-audio is **353 ms median**, about 93% of
-the perceived turn and the only stage outside its budget. Deepgram's streaming synthesis
-websocket is the lever.
+One optimisation, because the measurement said there was one thing worth doing: speech
+synthesis was the only stage outside its budget, at 375 ms of a 0.38 s turn. Moving it to
+a websocket held open for the call took it to **130 ms** (docs/latency.md), reproducible
+with `make measure-tts ARGS="--ab --gap 7"`.
+
+The phase is really about the discipline rather than the number, and it earned that
+twice. Measured back to back with no pause between utterances, the websocket showed *no
+improvement* — a caller speaks for seconds between replies and httpx expires an idle
+connection after five, so a tight loop measures a warm connection pool that no real call
+ever has. And an earlier comparison taken twenty minutes apart appeared to show a 2.6×
+win that was mostly the network being in a different mood; interleaving the paths in one
+session is what made the difference mean anything.
 
 ---
 

@@ -104,6 +104,14 @@ class Settings(BaseSettings):
     groq_tts_model: str = "canopylabs/orpheus-v1-english"
     #: Aura names the voice as the model, so this field is both.
     deepgram_tts_model: str = "aura-2-thalia-en"
+    #: Synthesise over the websocket rather than the REST endpoint.
+    #:
+    #: On by default because it is 445 ms to first audio against 130 ms,
+    #: measured with a realistic gap between utterances (docs/latency.md).
+    #: Here as a switch rather than a constant so a
+    #: socket problem in production is one environment variable away from the
+    #: path that has always worked, without a deploy.
+    deepgram_tts_streaming: bool = True
     groq_tts_voice: str = "hannah"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen3:8b"

@@ -329,9 +329,13 @@ def build_tts_provider(
             model=resolved.deepgram_tts_model,
             ledger=usage,
             session_id=session_id,
+            streaming=resolved.deepgram_tts_streaming,
         )
         logger.info(
-            "tts_provider_built", provider=deepgram_tts.name, model=resolved.deepgram_tts_model
+            "tts_provider_built",
+            provider=deepgram_tts.name,
+            model=resolved.deepgram_tts_model,
+            streaming=resolved.deepgram_tts_streaming,
         )
         return GuardedTTSProvider(deepgram_tts, mock, BudgetGuard(resolved, usage), session_id)
 
