@@ -361,8 +361,17 @@ class Orchestrator:
         awaiting: AwaitedInput | None = None
         offers: tuple[SlotOffer, ...] = ()
 
-        for workflow in (self.booking, self.management):
-            raw = session.workflow_state.get(f"{workflow.name}.offers")
+        # Only the workflow that is actually running. Scanning both and taking
+        # whichever had something left over let a stale list resolve a choice
+        # it had nothing to do with: on a live call the times offered during a
+        # booking eight turns earlier were still in memory, the caller said
+        # "Tuesday" to pick between two *appointments*, and it matched the
+        # second slot of the old booking list -- so the agent offered to cancel
+        # the Wednesday appointment and called it Tuesday. A list nobody has
+        # just read out cannot resolve anything.
+        active = session.active_workflow
+        if active is not None:
+            raw = session.workflow_state.get(f"{active}.offers")
             if isinstance(raw, list) and raw:
                 offers = tuple(SlotOffer.model_validate(item) for item in raw)
 
@@ -485,6 +494,11 @@ class Orchestrator:
             ai_action="Conversation handed over at the turn limit",
         )
         session.active_workflow = None
+        # The call is being handed to a person, so it ends here. Left open, the
+        # limit fires again on every further turn: one live call produced three
+        # separate front-desk escalations for the same handover, which is three
+        # tickets for one caller.
+        session.end(moment)
         return await self._record(
             session,
             turn_number,

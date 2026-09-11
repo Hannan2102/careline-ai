@@ -22,6 +22,7 @@ from dateutil import parser as date_parser
 
 from app.agents.intents import Intent
 from app.config.clinic import FAQ_TOPIC_ALIASES, PRACTITIONERS
+from app.utils.formatting import mentions_a_weekday
 from app.workflows.base import AwaitedInput, SlotOffer
 
 
@@ -258,6 +259,10 @@ INTENT_PHRASES: tuple[tuple[Intent, tuple[str, ...]], ...] = (
             "am i booked",
             "am i down for",
             "am i on the list",
+            "what appointments",
+            "appointments do i have",
+            "my appointments",
+            "anything booked",
             "what time is my",
             "when am i due",
             "due in",
@@ -465,8 +470,6 @@ _ORDINAL_PATTERN = re.compile(
 #: everywhere else -- so it is substituted only on the second-factor path,
 #: never in a date or a name.
 _OH_AS_ZERO = re.compile(r"\boh\b")
-
-WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 
 #: Phrasings that mark a question about the clinic itself, for the case where
 #: no FAQ topic matched.
@@ -862,11 +865,20 @@ class RuleBasedExtractor:
 
     @staticmethod
     def _ordinal(lowered: str, context: ExtractionContext) -> int | None:
-        # A weekday only means something against the times just offered.
-        if context.offers:
+        # A named day settles it on its own, and settles it either way.
+        #
+        # It is the most specific thing a caller can say -- more specific than
+        # any number in the sentence -- so if one is named, nothing else gets
+        # to answer. Falling through to the ordinal when the day matched
+        # nothing is how "can you cancel the Tuesday one?" resolved to the
+        # first appointment on the list, which was a Wednesday: there was no
+        # Tuesday, and the trailing "one" is a pronoun, not a number. Saying a
+        # day we cannot find has to mean asking again.
+        if mentions_a_weekday(lowered):
             for offer in context.offers:
                 if offer.start.strftime("%A").lower() in lowered:
                     return offer.index
+            return None
 
         match = re.search(r"\b(?:option|number|choice)?\s*([1-9])\b", lowered)
         if match:

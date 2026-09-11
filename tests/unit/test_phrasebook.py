@@ -62,6 +62,8 @@ LOOKUP = (
     "Did I book something?",
     "What time is my thing on Thursday?",
     "Am I on the list for tomorrow?",
+    "What appointments do I have?",
+    "Have I got anything booked?",
 )
 
 CANCEL = (

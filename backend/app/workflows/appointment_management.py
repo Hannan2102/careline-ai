@@ -30,7 +30,12 @@ from app.services.verification_service import (
     SecondFactorType,
     VerificationService,
 )
-from app.utils.formatting import format_appointment, format_day, format_time
+from app.utils.formatting import (
+    format_appointment,
+    format_day,
+    format_time,
+    mentions_a_weekday,
+)
 from app.workflows.base import (
     AwaitedInput,
     SlotOffer,
@@ -239,7 +244,7 @@ class AppointmentManagementWorkflow:
                 f"You have a few coming up: {listing}. Which one did you mean?",
             )
 
-        chosen = self._resolve_choice(appointments, turn.appointment_choice)
+        chosen = self._resolve_choice(appointments, turn.appointment_choice, turn.utterance)
         if chosen is None:
             listing = "; ".join(
                 f"{position}) {format_appointment(a.start, a.practitioner_name)}"
@@ -263,7 +268,7 @@ class AppointmentManagementWorkflow:
         if not appointments:
             return await self._load_appointments(session, turn, now)
 
-        chosen = self._resolve_choice(appointments, turn.appointment_choice)
+        chosen = self._resolve_choice(appointments, turn.appointment_choice, turn.utterance)
         if chosen is None:
             listing = "; ".join(
                 f"{position}) {format_appointment(a.start, a.practitioner_name)}"
@@ -535,14 +540,45 @@ class AppointmentManagementWorkflow:
         )
 
     @staticmethod
-    def _resolve_choice(appointments: list[Appointment], choice: int | None) -> Appointment | None:
+    def _resolve_choice(
+        appointments: list[Appointment], choice: int | None, utterance: str = ""
+    ) -> Appointment | None:
+        by_day = AppointmentManagementWorkflow._resolve_by_day(appointments, utterance)
+        if by_day is not None:
+            return by_day
+        # A day was named and it matched nothing of theirs. Better to ask than
+        # to fall back on a number found elsewhere in the sentence.
+        if mentions_a_weekday(utterance):
+            return None
         if len(appointments) == 1 and choice is None:
             return appointments[0]
-        if choice is None:
-            return None
-        if 1 <= choice <= len(appointments):
+        if choice is not None and 1 <= choice <= len(appointments):
             return appointments[choice - 1]
         return None
+
+    @staticmethod
+    def _resolve_by_day(appointments: list[Appointment], utterance: str) -> Appointment | None:
+        """ "Tuesday", said against the appointments just read out.
+
+        The listing names the day of each one, so a caller answers with a day
+        at least as often as with a number -- and being asked "which one did
+        you mean?" twice after saying it clearly is how somebody gives up.
+
+        Matched against the same rendered label the caller heard, so the words
+        being compared are the words that were spoken. Only an unambiguous
+        match counts: two appointments on a Tuesday means asking again, never
+        picking one. This cancels appointments, and a coin toss is not consent.
+        """
+        lowered = utterance.lower()
+        matches = [
+            appointment
+            for appointment in appointments
+            if format_appointment(appointment.start, appointment.practitioner_name)
+            .lower()
+            .split()[0]
+            in lowered
+        ]
+        return matches[0] if len(matches) == 1 else None
 
     @staticmethod
     def _stored_appointments(memory: WorkflowMemory) -> list[Appointment]:

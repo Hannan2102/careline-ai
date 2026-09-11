@@ -273,6 +273,25 @@ class TestConversationLimits:
         assert "pass you to a member of our staff" in final.message
         assert final.trace.escalation_id is not None
 
+    async def test_the_handover_happens_once(self, ehr: EHRProvider) -> None:
+        """The call ends with it, rather than repeating it.
+
+        Left open, the limit fires again on every further turn and raises a
+        fresh escalation each time: one live call produced three separate
+        front-desk tickets for the same handover, and the caller heard the
+        same sentence three times while getting nowhere.
+        """
+        runtime = build_runtime(
+            ehr=ehr,
+            settings=Settings(_env_file=None, app_env="test", max_conversation_turns=3),
+        )
+        session = runtime.sessions.create()
+        for _ in range(4):
+            await say(runtime, session, "Are you open on Saturday?")
+
+        assert not session.is_active, "the call carried on after being handed over"
+        assert len(runtime.escalations.store.all()) == 1
+
     async def test_mock_providers_cost_nothing(
         self, runtime: Runtime, session: SessionState
     ) -> None:

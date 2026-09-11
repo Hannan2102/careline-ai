@@ -7,9 +7,33 @@ happens in one place.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 from app.config.clinic import CLINIC_TIMEZONE
+
+#: The days as a caller says them, and as ``format_day`` writes them.
+#:
+#: Here rather than in the extractor because both the extractor and the
+#: workflows need to know whether a caller named a day, and a workflow
+#: importing the extractor's internals to find out would be the wrong way
+#: round -- workflows take typed input and know nothing about parsing.
+WEEKDAYS: tuple[str, ...] = (
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+)
+
+_WEEKDAY_RE = re.compile(r"\b(?:" + "|".join(WEEKDAYS) + r")s?\b", re.IGNORECASE)
+
+
+def mentions_a_weekday(text: str) -> bool:
+    """Whether the caller named a day of the week."""
+    return _WEEKDAY_RE.search(text) is not None
 
 
 def local(value: datetime) -> datetime:
