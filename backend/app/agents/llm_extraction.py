@@ -46,7 +46,14 @@ logger = get_logger(__name__)
 
 #: Long enough for the JSON object below, short enough that a model which
 #: starts narrating is cut off rather than paid for.
-MAX_OUTPUT_TOKENS = 200
+#:
+#: Raised from 200 when three fields were added: models echo every key in the
+#: schema with a null rather than omitting it, so the reply grew past the cap,
+#: arrived without its closing brace, and was discarded whole. The symptom was
+#: not an error -- it was the classifier quietly getting worse at everything,
+#: which is the hardest kind of failure to notice and took a raw dump of the
+#: response to see. Any headroom is cheaper than that.
+MAX_OUTPUT_TOKENS = 400
 
 #: Lists read to a caller are three or four long; they have to be, because
 #: nobody holds ten options in their head over the phone.
@@ -80,8 +87,9 @@ none_suitable: they turned down everything offered, however they said it.
 confirm: true for yes, false for no.
 out_of_scope: a real request this line cannot serve -- a complaint, test
 results, a referral chased, anything for a clinician to answer.
-changes_subject: true only if the caller has dropped the agent's question and
-asked for something different. Answering it, badly or partly, is not that.
+changes_subject: true if they want something other than an answer to that
+question, including something added to it ("while I'm on", "can you also",
+"before I go"). False if they are answering it, however clumsily or partly.
 
 intent: {", ".join(i.value for i in Intent)}
 
@@ -316,6 +324,10 @@ class LLMExtractor:
             return None
         start, end = text.find("{"), text.rfind("}")
         if start == -1 or end <= start:
+            # Nearly always a reply that ran out of tokens mid-object. Worth a
+            # line in the log: on the way past, it looks like a model that has
+            # got worse rather than one that was cut off.
+            logger.warning("llm_extraction_incomplete", reply=text[-60:])
             return None
         try:
             return _Classification.model_validate(json.loads(text[start : end + 1]))
