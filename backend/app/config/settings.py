@@ -74,6 +74,9 @@ class Settings(BaseSettings):
 
     # --- AI providers ----------------------------------------------------
     ai_mode: AIMode = AIMode.MOCK
+    #: Let the model classify intent, with the rules as the floor beneath it.
+    #: Has no effect in mock mode, where the mock LLM classifies nothing.
+    llm_extraction_enabled: bool = True
     llm_provider: LLMProviderName = "mock"
     stt_provider: STTProviderName = "mock"
     tts_provider: TTSProviderName = "mock"

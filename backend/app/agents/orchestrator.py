@@ -177,7 +177,7 @@ class Orchestrator:
             # 2. Extraction, with the outstanding question as context.
             extraction_started = time.perf_counter()
             context = self._context(session)
-            extracted = self.extractor.extract(utterance, context)
+            extracted = await self.extractor.aextract(utterance, context)
             extraction_ms = (time.perf_counter() - extraction_started) * 1000
 
             # 3. Route and execute.

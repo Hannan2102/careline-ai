@@ -59,7 +59,18 @@ class ExtractionContext:
 
 
 class TurnExtractor(Protocol):
+    """How a turn becomes an intent and a set of entities.
+
+    Two entry points because the implementations differ in kind. The rules are
+    pure string work and are called synchronously from a hundred tests; an
+    extractor that consults a model has to await it. ``aextract`` is what the
+    orchestrator uses, and a synchronous implementation satisfies it by
+    returning what ``extract`` already produced.
+    """
+
     def extract(self, utterance: str, context: ExtractionContext) -> ExtractedTurn: ...
+
+    async def aextract(self, utterance: str, context: ExtractionContext) -> ExtractedTurn: ...
 
 
 # --------------------------------------------------------------------------
@@ -486,6 +497,10 @@ class RuleBasedExtractor:
                 if phrase in lowered:
                     return intent, 0.9
         return Intent.UNKNOWN, 0.2
+
+    async def aextract(self, utterance: str, context: ExtractionContext) -> ExtractedTurn:
+        """The rules again. Nothing here waits on anything."""
+        return self.extract(utterance, context)
 
     # ----------------------------------------------------------- entities
     @staticmethod

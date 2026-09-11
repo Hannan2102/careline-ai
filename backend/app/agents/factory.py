@@ -9,15 +9,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.agents.extraction import RuleBasedExtractor, TurnExtractor
+from app.agents.llm_extraction import LLMExtractor
 from app.agents.orchestrator import Orchestrator
 from app.agents.state import SessionState
 from app.agents.trace import TraceStore
+from app.ai.providers.factory import build_llm_provider
 from app.ai.usage import UsageLedger, get_usage_ledger
-from app.config.settings import Settings, get_settings
+from app.config.settings import AIMode, Settings, get_settings
 from app.db.engine import Database
 from app.db.repositories import total_estimated_cost
 from app.ehr.base import EHRProvider
 from app.ehr.factory import build_ehr_provider
+from app.observability.logging import get_logger
 from app.services.audit_service import AuditService
 from app.services.coverage_service import CoverageService
 from app.services.escalation_service import EscalationService
@@ -29,6 +33,8 @@ from app.services.safety_service import SafetyService
 from app.services.scheduling_service import SchedulingService
 from app.services.session_service import SessionStore
 from app.services.verification_service import VerificationService
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -110,6 +116,7 @@ def build_runtime(
     )
 
     patients = PatientService(provider)
+    extractor = _build_extractor(resolved_settings, usage)
     orchestrator = Orchestrator(
         safety=SafetyService(escalations=escalations),
         verification=VerificationService(patients, escalations),
@@ -123,6 +130,7 @@ def build_runtime(
         ledger=usage,
         settings=resolved_settings,
         persistence=persistence,
+        extractor=extractor,
     )
     return Runtime(
         orchestrator=orchestrator,
@@ -136,3 +144,19 @@ def build_runtime(
         database=database,
         persistence=persistence,
     )
+
+
+def _build_extractor(settings: Settings, ledger: UsageLedger) -> TurnExtractor:
+    """The rules, wrapped in a model when one is configured.
+
+    Mock mode returns the rules unwrapped rather than relying on the mock LLM
+    to decline: the test suite must not depend on a provider's good manners for
+    its determinism, and a wrapper that always falls through is a wrapper worth
+    not having.
+    """
+    rules = RuleBasedExtractor()
+    if settings.ai_mode is AIMode.MOCK or not settings.llm_extraction_enabled:
+        return rules
+    llm = build_llm_provider(settings, ledger)
+    logger.info("llm_extraction_enabled", provider=llm.name)
+    return LLMExtractor(llm, rules)
