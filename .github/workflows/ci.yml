@@ -34,20 +34,26 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
+      # Into a venv, not `--system`: the runner's system interpreter is
+      # externally managed (PEP 668) and refuses the install outright. This is
+      # also what `make install` does, so CI runs the setup the README
+      # documents rather than a second one that only exists here.
       - name: Install dependencies
-        run: uv pip install --system -e ".[dev,db]"
+        run: |
+          uv venv --python 3.12 .venv
+          uv pip install --python .venv/bin/python -e ".[dev,db]"
 
       - name: Lint (ruff)
-        run: ruff check backend tests scripts
+        run: .venv/bin/ruff check backend tests scripts
 
       - name: Format check (ruff)
-        run: ruff format --check backend tests scripts
+        run: .venv/bin/ruff format --check backend tests scripts
 
       - name: Type check (mypy)
-        run: mypy
+        run: .venv/bin/mypy
 
       - name: Tests (no network, no cost)
-        run: pytest -m "not integration and not paid" -q
+        run: .venv/bin/pytest -m "not integration and not paid" -q
 
       - name: Assert no paid provider was reachable
         run: |
