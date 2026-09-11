@@ -149,6 +149,12 @@ FAQ_TOPIC_ALIASES: dict[str, str] = {
     "location": "location",
     "address": "location",
     "directions": "location",
+    # Matching is substring-based, so an alias only fires on its exact letters:
+    # "location" is not in "where are you located?", which left the single most
+    # obvious phrasing of the question unanswered.
+    "located": "location",
+    "where_are_you": "location",
+    "how_do_i_get_to_you": "location",
     "phone": "phone",
     "number": "phone",
     "parking": "parking",
@@ -164,6 +170,18 @@ FAQ_TOPIC_ALIASES: dict[str, str] = {
     "new_patient_process": "new_patient_process",
     "insurance": "insurance",
     "coverage": "insurance",
+    "insured": "insurance",
+    "covered": "insurance",
+    # The carrier as people say it, not as the plan is filed: nobody asks "do
+    # you take Blue Shield PPO (demo)". These track ACCEPTED_INSURANCE above --
+    # add the spoken form here when a plan is added there. A carrier we do not
+    # accept matches nothing and ends up with the front desk, which is the
+    # right place for it.
+    "blue_shield": "insurance",
+    "meridian": "insurance",
+    "medicaid": "insurance",
+    "medicare": "insurance",
+    "employee_plan": "insurance",
     "providers": "providers",
     "doctors": "providers",
 }

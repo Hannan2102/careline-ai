@@ -67,6 +67,17 @@ class DeepgramSTTProvider:
                 "channels": 1,
                 "interim_results": "true",
                 "punctuate": "true",
+                # `smart_format` is deliberately NOT enabled, despite being the
+                # obvious choice for dates. It rewrites "the fourth of March
+                # nineteen seventy eight" as "03/04/1978" -- US order, and
+                # indistinguishable from 3 April to any parser that has to
+                # guess. A third of dates are ambiguous that way, in the one
+                # place where guessing wrong means failing to identify a real
+                # patient. It also mangles a bare year: "nineteen seventy
+                # eight" came back as "19 70 8" in testing.
+                #
+                # The spoken form is unambiguous, so it is kept and resolved
+                # deterministically in `agents/extraction.py` instead.
                 # Deepgram decides where an utterance ends; the orchestrator
                 # only ever acts on a final transcript.
                 "endpointing": "300",

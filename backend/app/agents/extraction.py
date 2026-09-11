@@ -201,7 +201,57 @@ ORDINAL_WORDS: dict[str, int] = {
     "last": -1,
 }
 
+#: Leftmost-longest match over the words above.
+#:
+#: Both properties are load-bearing, and getting either wrong books the caller
+#: into the wrong appointment. "The second one" contains *two* of these words:
+#: iterating the dict returned `one` -> 1 before ever testing `second`, so
+#: "the second one", "the third one" and "the last one" all resolved to the
+#: first offered slot -- confidently, with a confirmation naming a time the
+#: caller had not chosen.
+#:
+#: Leftmost is what disambiguates: the trailing "one" in "the second one" is a
+#: pronoun, and the word that actually names the choice comes first. Longest
+#: settles "2nd" against a same-position rival. Alternation in a single
+#: pattern gives leftmost for free; sorting the branches by length gives
+#: longest, because Python tries branches in order at each position.
+_ORDINAL_PATTERN = re.compile(
+    r"\b(" + "|".join(sorted(map(re.escape, ORDINAL_WORDS), key=len, reverse=True)) + r")\b"
+)
+
 WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+#: Phrasings that mark a question about the clinic itself, for the case where
+#: no FAQ topic matched.
+#:
+#: Without these, "do you have a physiotherapist?" was classified UNKNOWN and
+#: answered with the generic list of things the agent can do -- which reads as
+#: a non-answer to someone who asked a perfectly reasonable question. The FAQ
+#: workflow has always handled an unanswerable topic by escalating to the front
+#: desk (docs/call-flows.md), but nothing could reach that branch: intent only
+#: became CLINIC_FAQ once a topic had already matched, and every topic in the
+#: alias table has an answer.
+#:
+#: A small demo vocabulary, in the manner of KNOWN_MEDICATIONS above, and
+#: deliberately so: the alternative is a general "is this about the clinic?"
+#: rule, which would swallow "what can you help with?" and answer a question
+#: about the agent with a transfer to a human.
+CLINIC_QUESTION_MARKERS = (
+    "do you take",
+    "do you accept",
+    "do you offer",
+    "do you have",
+    "do you do",
+    "walk in",
+    "walk-in",
+    "referral",
+    "x-ray",
+    "xray",
+    "blood test",
+    "lab work",
+    "specialist",
+    "physio",
+)
 
 #: A small demo vocabulary. Real deployments need the patient's own list or a
 #: drug dictionary; the LLM extractor in Phase 12 removes this limitation.
@@ -225,6 +275,83 @@ _NAME_PATTERNS = (
     r"(?i:my name'?s|my name is|i am|i'?m|this is|it'?s|speaking with|calling for)"
     r"\s+([A-Z][\w'-]+(?:\s+[A-Z][\w'-]+)+)",
     r"^([A-Z][\w'-]+(?:\s+[A-Z][\w'-]+)+)[,.]?\s*(?i:born|date of birth|dob)",
+)
+
+#: Number words, for dates that arrive as speech rather than digits.
+#:
+#: Speech recognition returns what was said, and people say dates out loud:
+#: "the fifteenth of February nineteen eighty five". Every pattern below
+#: requires digits, so voice callers could never be verified at all -- the one
+#: place in this system where failing to parse means failing to identify a real
+#: patient. Deepgram's `smart_format` handles the common shapes, but it mangles
+#: some ("nineteen seventy eight" became "19 70 8" in testing), so the text
+#: path has to stand on its own.
+_UNITS: dict[str, int] = {
+    "zero": 0,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+    "first": 1,
+    "second": 2,
+    "third": 3,
+    "fourth": 4,
+    "fifth": 5,
+    "sixth": 6,
+    "seventh": 7,
+    "eighth": 8,
+    "ninth": 9,
+    "tenth": 10,
+    "eleventh": 11,
+    "twelfth": 12,
+    "thirteenth": 13,
+    "fourteenth": 14,
+    "fifteenth": 15,
+    "sixteenth": 16,
+    "seventeenth": 17,
+    "eighteenth": 18,
+    "nineteenth": 19,
+}
+_TENS: dict[str, int] = {
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fifty": 50,
+    "sixty": 60,
+    "seventy": 70,
+    "eighty": 80,
+    "ninety": 90,
+    "twentieth": 20,
+    "thirtieth": 30,
+}
+_MONTH_WORDS = (
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
 )
 
 _DOB_PATTERNS = (
@@ -277,10 +404,14 @@ class RuleBasedExtractor:
         if context.awaiting is not None:
             return Intent.UNKNOWN, 1.0
 
-        if self._faq_topic(lowered) is not None and not any(
-            word in lowered for word in ("appointment", "book", "refill", "cancel")
-        ):
-            return Intent.CLINIC_FAQ, 0.9
+        if not any(word in lowered for word in ("appointment", "book", "refill", "cancel")):
+            if self._faq_topic(lowered) is not None:
+                return Intent.CLINIC_FAQ, 0.9
+            # A clinic question we have no answer for. Routed to the FAQ
+            # workflow anyway, with no topic, so it escalates to the front desk
+            # rather than being met with the generic capability list.
+            if any(marker in lowered for marker in CLINIC_QUESTION_MARKERS):
+                return Intent.CLINIC_FAQ, 0.6
 
         for intent, phrases in INTENT_PHRASES:
             for phrase in phrases:
@@ -305,16 +436,18 @@ class RuleBasedExtractor:
 
     @staticmethod
     def _date_of_birth(text: str) -> date | None:
-        for pattern in _DOB_PATTERNS:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if not match:
-                continue
-            try:
-                # dayfirst: the clinic is fictional, but "15/02/1985" is far
-                # more likely to be 15 February than an invalid month.
-                return date_parser.parse(match.group(1), dayfirst=True).date()
-            except (ValueError, OverflowError):
-                continue
+        digitised = _spoken_numbers_to_digits(text)
+        for candidate in (text, digitised) if digitised != text else (text,):
+            for pattern in _DOB_PATTERNS:
+                match = re.search(pattern, candidate, re.IGNORECASE)
+                if not match:
+                    continue
+                try:
+                    # dayfirst: the clinic is fictional, but "15/02/1985" is far
+                    # more likely to be 15 February than an invalid month.
+                    return date_parser.parse(match.group(1), dayfirst=True).date()
+                except (ValueError, OverflowError):
+                    continue
         return None
 
     @staticmethod
@@ -370,11 +503,12 @@ class RuleBasedExtractor:
         if match:
             return int(match.group(1))
 
-        for word, index in ORDINAL_WORDS.items():
-            if re.search(rf"\b{re.escape(word)}\b", lowered):
-                if index == -1:
-                    return len(context.offers) or None
-                return index
+        match = _ORDINAL_PATTERN.search(lowered)
+        if match:
+            index = ORDINAL_WORDS[match.group(1)]
+            if index == -1:
+                return len(context.offers) or None
+            return index
         return None
 
     @staticmethod
@@ -385,3 +519,94 @@ class RuleBasedExtractor:
         if any(re.search(rf"\b{re.escape(word)}\b", stripped) for word in YES_WORDS):
             return True
         return None
+
+
+def _spoken_numbers_to_digits(text: str) -> str:
+    """Rewrite spoken numbers as digits so the date patterns can see them.
+
+    Handles the two shapes that matter for a date of birth: a day ("the
+    fifteenth"), and a year said as two pairs ("nineteen eighty five" -> 1985,
+    "two thousand and two" -> 2002). Deliberately narrow -- this is not a
+    general number parser, and a general one would start rewriting things that
+    are not dates.
+    """
+    words = re.split(r"(\W+)", text.lower())
+    out: list[str] = []
+    index = 0
+
+    while index < len(words):
+        word = words[index]
+
+        # "two thousand and two" / "two thousand"
+        if word in _UNITS and _peek(words, index, 2) == "thousand":
+            value = _UNITS[word] * 1000
+            consumed = 4
+            tail = _peek(words, index, 4)
+            if tail == "and":
+                tail = _peek(words, index, 6)
+                consumed = 6
+            if tail in _UNITS:
+                value += _UNITS[tail]
+                consumed += 2
+            elif tail in _TENS:
+                value += _TENS[tail]
+                consumed += 2
+                after = _peek(words, index, consumed)
+                if after in _UNITS:
+                    value += _UNITS[after]
+                    consumed += 2
+            out.append(f"{value} ")
+            index += consumed
+            continue
+
+        # "nineteen eighty five" -> 1985; "nineteen seventy" -> 1970
+        if word in _UNITS and 10 <= _UNITS[word] <= 19:
+            tens = _peek(words, index, 2)
+            if tens in _TENS:
+                year = _UNITS[word] * 100 + _TENS[tens]
+                consumed = 4
+                unit = _peek(words, index, 4)
+                if unit in _UNITS and _UNITS[unit] < 10:
+                    year += _UNITS[unit]
+                    consumed += 2
+                out.append(f"{year} ")
+                index += consumed
+                continue
+
+        # "twenty first" -> 21
+        if word in _TENS:
+            unit = _peek(words, index, 2)
+            if unit in _UNITS and _UNITS[unit] < 10:
+                out.append(f"{_TENS[word] + _UNITS[unit]} ")
+                index += 4
+                continue
+            out.append(f"{_TENS[word]} ")
+            index += 2
+            continue
+
+        if word in _UNITS:
+            out.append(f"{_UNITS[word]} ")
+            index += 2
+            continue
+
+        out.append(words[index])
+        index += 1
+
+    # Each emitted number carries a trailing space, because consuming a number
+    # word also consumes the separator that followed it.
+    rewritten = re.sub(r"\s+", " ", "".join(out)).strip()
+    # "born on the 15 of February 1985" is not a shape the patterns match; drop
+    # the connectives so it becomes "15 February 1985".
+    rewritten = re.sub(r"\bthe\s+", "", rewritten)
+    rewritten = re.sub(r"\b(\d{1,2}) of (?=[a-z])", r"\1 ", rewritten)
+    return rewritten
+
+
+def _peek(words: list[str], index: int, offset: int) -> str:
+    """The token ``offset`` positions ahead, or "" past the end.
+
+    Offsets are even because the split keeps separators: words sit at even
+    indices, whitespace at odd ones.
+    """
+    position = index + offset
+    return words[position] if position < len(words) else ""

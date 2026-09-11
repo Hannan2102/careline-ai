@@ -27,6 +27,19 @@ from app.workflows.base import AwaitedInput
 
 ASK_IDENTITY = "Could I take your full name and date of birth?"
 
+#: Asked when only half the identity has arrived. People answer one question at
+#: a time -- especially out loud -- so a caller who has just given their name
+#: should be asked for the date of birth, not asked for both again as though
+#: nothing had been said.
+ASK_DATE_OF_BIRTH = "Thanks. And your date of birth?"
+ASK_FULL_NAME = "Thanks. And your full name?"
+
+#: Where a half-given identity waits for its other half. Namespaced under the
+#: session's workflow state so it travels with the conversation and is cleared
+#: with it.
+_PARTIAL_NAME = "_identity.full_name"
+_PARTIAL_DOB = "_identity.date_of_birth"
+
 #: Deliberately identical whether the record is unknown or the details are
 #: wrong. The difference between those two is itself information (ADR 003).
 RETRY_IDENTITY = (
@@ -86,6 +99,42 @@ class IdentityCollector:
         )
 
     @staticmethod
+    def _ask(message: str) -> IdentityResult:
+        return IdentityResult(
+            outcome=IdentityOutcome.NEEDS_IDENTITY,
+            message=message,
+            awaiting=AwaitedInput.IDENTITY,
+        )
+
+    # ------------------------------------------------------ partial identity
+    @staticmethod
+    def _remember(session: SessionState, full_name: str | None, date_of_birth: date | None) -> None:
+        if full_name is not None:
+            session.workflow_state[_PARTIAL_NAME] = full_name
+        if date_of_birth is not None:
+            session.workflow_state[_PARTIAL_DOB] = date_of_birth.isoformat()
+
+    @staticmethod
+    def _forget(session: SessionState) -> None:
+        session.workflow_state.pop(_PARTIAL_NAME, None)
+        session.workflow_state.pop(_PARTIAL_DOB, None)
+
+    @staticmethod
+    def _remembered_name(session: SessionState) -> str | None:
+        value = session.workflow_state.get(_PARTIAL_NAME)
+        return value if isinstance(value, str) else None
+
+    @staticmethod
+    def _remembered_dob(session: SessionState) -> date | None:
+        value = session.workflow_state.get(_PARTIAL_DOB)
+        if not isinstance(value, str):
+            return None
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            return None
+
+    @staticmethod
     def ask_second_factor() -> IdentityResult:
         return IdentityResult(
             outcome=IdentityOutcome.NEEDS_SECOND_FACTOR,
@@ -96,8 +145,31 @@ class IdentityCollector:
     async def submit_identity(
         self, session: SessionState, full_name: str | None, date_of_birth: date | None
     ) -> IdentityResult:
+        """Verify, remembering whichever half of the identity has arrived.
+
+        Identity used to require both facts in a single utterance, and anything
+        given on its own was silently discarded -- so a caller who answered
+        "John Smith", then gave their date of birth, was asked for both again
+        and again. Every test in the suite passed because every test said
+        "My name is X and I was born Y" in one breath, which is not how anyone
+        speaks, least of all on the phone.
+        """
+        full_name = full_name or self._remembered_name(session)
+        date_of_birth = date_of_birth or self._remembered_dob(session)
+
         if full_name is None or date_of_birth is None:
+            self._remember(session, full_name, date_of_birth)
+            if full_name is not None:
+                return self._ask(ASK_DATE_OF_BIRTH)
+            if date_of_birth is not None:
+                return self._ask(ASK_FULL_NAME)
             return self.ask()
+
+        # A complete attempt is about to be made, so the partials have served
+        # their purpose. Clearing them here means a failed attempt starts the
+        # next one clean rather than silently reusing a value the caller was
+        # trying to correct.
+        self._forget(session)
 
         self.audit.record(AuditAction.VERIFICATION_ATTEMPTED, session_id=session.session_id)
         result = await self.verification.verify_identity(session, full_name, date_of_birth)
