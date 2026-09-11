@@ -267,6 +267,11 @@ _ORDINAL_PATTERN = re.compile(
     r"\b(" + "|".join(sorted(map(re.escape, ORDINAL_WORDS), key=len, reverse=True)) + r")\b"
 )
 
+#: "Oh" is a zero when someone is reading digits aloud, and an ordinary noise
+#: everywhere else -- so it is substituted only on the second-factor path,
+#: never in a date or a name.
+_OH_AS_ZERO = re.compile(r"\boh\b")
+
 WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 
 #: Phrasings that mark a question about the clinic itself, for the case where
@@ -405,12 +410,18 @@ _MONTH_WORDS = (
     "december",
 )
 
+#: A month, however much of it was said.
+#:
+#: Three letters, then whatever else came: "feb", "Feb.", "february" and
+#: "sept" all match, and a caller who abbreviates is not asked to repeat
+#: themselves. Observed live -- "fifteenth Feb nineteen eighty five" parsed to
+#: nothing, and the caller was asked for their date of birth again.
+_MONTH_RE = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
+
 _DOB_PATTERNS = (
     r"\b(\d{4}-\d{2}-\d{2})\b",
-    r"\b(\d{1,2}\s+(?:january|february|march|april|may|june|july|august|september|october|"
-    r"november|december)\s+\d{4})\b",
-    r"\b((?:january|february|march|april|may|june|july|august|september|october|november|"
-    r"december)\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4})\b",
+    rf"\b(\d{{1,2}}\s+{_MONTH_RE}\s+\d{{4}})\b",
+    rf"\b({_MONTH_RE}\s+\d{{1,2}}(?:st|nd|rd|th)?,?\s+\d{{4}})\b",
     r"\b(\d{1,2}/\d{1,2}/\d{4})\b",
 )
 
@@ -488,7 +499,7 @@ class RuleBasedExtractor:
         if context.awaiting is AwaitedInput.IDENTITY:
             candidate = re.match(r"^\s*([A-Z][\w'-]+(?:\s+[A-Z][\w'-]+)+)", text.strip())
             if candidate and not _is_spoken_date(candidate.group(1)):
-                return " ".join(candidate.group(1).split())
+                return _without_leading_ordinal(candidate.group(1))
         return None
 
     @staticmethod
@@ -511,7 +522,12 @@ class RuleBasedExtractor:
     def _second_factor(lowered: str, context: ExtractionContext) -> str | None:
         if context.awaiting is not AwaitedInput.SECOND_FACTOR:
             return None
-        digits = re.sub(r"\D", "", lowered)
+        # Nobody reads a phone number as a number. "Zero four one one" arrives
+        # with no digits in it at all, so stripping non-digits left nothing and
+        # the agent asked for the same four digits indefinitely -- observed
+        # live, three times in a row before the caller gave up.
+        spoken = _spoken_numbers_to_digits(_OH_AS_ZERO.sub("0", lowered))
+        digits = re.sub(r"\D", "", spoken)
         return digits[-4:] if len(digits) >= 4 else None
 
     @staticmethod
@@ -589,6 +605,28 @@ class RuleBasedExtractor:
 #: own. Without "thousand", "Twenty First December Two Thousand Two" is not
 #: all-date-vocabulary and survives as a name.
 _DATE_GLUE = frozenset({"thousand", "hundred", "and", "of", "the", "on", "born"})
+
+
+def _without_leading_ordinal(candidate: str) -> str:
+    """Drop a stray ordinal in front of a name.
+
+    Recognisers hallucinate a leading ordinal surprisingly often on a short
+    reply -- "Fifth John Smith" was transcribed live, from someone saying only
+    their name, and it failed verification because the record is under "John
+    Smith". Nobody's first name is an ordinal, so removing one costs nothing.
+
+    Ordinals only, never month words: April, May and June are first names, and
+    stripping those would turn "April Smith" into "Smith".
+    """
+    words = candidate.split()
+    # The full number vocabulary, not ORDINAL_WORDS: that table stops at three
+    # because it only ever has to resolve a choice from a short list of offered
+    # slots, and "Fifth" is exactly the kind of thing that gets hallucinated.
+    while len(words) > 2 and (
+        words[0].lower() in ORDINAL_WORDS or words[0].lower() in _UNITS or words[0].lower() in _TENS
+    ):
+        words = words[1:]
+    return " ".join(words)
 
 
 def _is_spoken_date(candidate: str) -> bool:

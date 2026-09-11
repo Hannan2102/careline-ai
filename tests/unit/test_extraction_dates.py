@@ -136,3 +136,110 @@ class TestADateIsNotAName:
         vocabulary before the candidate is discarded, not just one.
         """
         assert RuleBasedExtractor().extract(name, asked_for_identity).full_name == name
+
+
+class TestSpokenDigits:
+    """A phone number read aloud contains no digits.
+
+    Found live and it was fatal: the agent asked for the last four digits of
+    the phone number, the caller said "zero four one one" three times, and each
+    time the extractor stripped non-digits from a string that had none and got
+    nothing. The same question, indefinitely, with no way through.
+    """
+
+    @pytest.fixture
+    def asked_for_digits(self) -> ExtractionContext:
+        return ExtractionContext(awaiting=AwaitedInput.SECOND_FACTOR)
+
+    @pytest.mark.parametrize(
+        ("spoken", "expected"),
+        [
+            ("Zero four one one.", "0411"),
+            ("Yes. It's zero four one one.", "0411"),
+            ("zero five two two", "0522"),
+            # "Oh" for zero is how people actually read numbers out.
+            ("oh four one one", "0411"),
+            # Digits still work, spaced or not.
+            ("0411", "0411"),
+            ("It is 0 4 1 1", "0411"),
+        ],
+    )
+    def test_digits_read_aloud_are_understood(
+        self, asked_for_digits: ExtractionContext, spoken: str, expected: str
+    ) -> None:
+        extracted = RuleBasedExtractor().extract(spoken, asked_for_digits)
+        assert extracted.second_factor_value == expected
+
+    def test_nothing_numeric_yields_nothing(self, asked_for_digits: ExtractionContext) -> None:
+        """Better to ask again than to verify against a guess."""
+        assert (
+            RuleBasedExtractor().extract("I'm not sure", asked_for_digits).second_factor_value
+            is None
+        )
+
+    def test_digits_are_only_read_when_they_were_asked_for(self) -> None:
+        """ "I was born in nineteen ninety" is not a second factor."""
+        extracted = RuleBasedExtractor().extract(
+            "zero four one one", ExtractionContext(awaiting=AwaitedInput.IDENTITY)
+        )
+        assert extracted.second_factor_value is None
+
+
+class TestAbbreviatedMonths:
+    """Callers abbreviate, and recognisers abbreviate for them."""
+
+    @pytest.fixture
+    def asked_for_identity(self) -> ExtractionContext:
+        return ExtractionContext(awaiting=AwaitedInput.IDENTITY)
+
+    @pytest.mark.parametrize(
+        ("spoken", "expected"),
+        [
+            # Transcribed live, and parsed to nothing: the caller was asked for
+            # their date of birth a second time having just given it.
+            ("fifteenth Feb nineteen eighty five.", date(1985, 2, 15)),
+            ("15 Feb 1985", date(1985, 2, 15)),
+            ("Feb 15 1985", date(1985, 2, 15)),
+            ("15 Sept 1985", date(1985, 9, 15)),
+            ("3 Nov 1972", date(1972, 11, 3)),
+            # And the unabbreviated forms still work.
+            ("15 February 1985", date(1985, 2, 15)),
+            ("21 June 1990", date(1990, 6, 21)),
+        ],
+    )
+    def test_a_shortened_month_still_parses(
+        self, asked_for_identity: ExtractionContext, spoken: str, expected: date
+    ) -> None:
+        assert RuleBasedExtractor().extract(spoken, asked_for_identity).date_of_birth == expected
+
+
+class TestAStrayOrdinalBeforeAName:
+    """Recognisers hallucinate a leading ordinal on short replies.
+
+    "Fifth John Smith" was transcribed from someone saying only their name, and
+    verification failed because the record is under "John Smith".
+    """
+
+    @pytest.fixture
+    def asked_for_identity(self) -> ExtractionContext:
+        return ExtractionContext(awaiting=AwaitedInput.IDENTITY)
+
+    @pytest.mark.parametrize(
+        ("heard", "expected"),
+        [
+            ("Fifth John Smith", "John Smith"),
+            ("Twenty First Robert Johnson", "Robert Johnson"),
+            ("John Smith", "John Smith"),
+        ],
+    )
+    def test_a_leading_ordinal_is_dropped(
+        self, asked_for_identity: ExtractionContext, heard: str, expected: str
+    ) -> None:
+        assert RuleBasedExtractor().extract(heard, asked_for_identity).full_name == expected
+
+    @pytest.mark.parametrize("name", ["April Smith", "May Thompson", "June Carter"])
+    def test_a_month_is_never_stripped(
+        self, asked_for_identity: ExtractionContext, name: str
+    ) -> None:
+        """Ordinals only. April, May and June are first names."""
+        assert RuleBasedExtractor().extract(name, asked_for_identity).full_name == name
