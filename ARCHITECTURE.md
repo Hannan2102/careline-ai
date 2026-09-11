@@ -139,7 +139,7 @@ sequenceDiagram
   participant A as Voice agent
   participant D as Deepgram
   participant R as Agent runtime
-  participant EL as ElevenLabs
+  participant EL as Deepgram Aura
   B->>L: mic audio
   L->>A: audio frames
   A->>D: stream
@@ -178,11 +178,12 @@ flowchart LR
   S --> S3[MockSTTProvider]
   S --> R[Agent runtime]
   R --> L[LLMProvider]
-  L --> L1[OpenAILLMProvider]
+  L --> L1[OpenAILLMProvider - also Groq]
   L --> L2[OllamaLLMProvider - future]
   L --> L3[MockLLMProvider]
   R --> TT[TTSProvider]
-  TT --> T1[ElevenLabsTTSProvider]
+  TT --> T1[DeepgramTTSProvider - Aura]
+  TT --> T1b[GroqTTSProvider - Orpheus]
   TT --> T2[PiperTTSProvider - future]
   TT --> T3[MockTTSProvider]
 ```
@@ -234,9 +235,16 @@ SessionState
 ```
 
 Per turn: **classify safety → resolve intent → select/continue workflow → execute
-deterministic step(s) → render response**. The LLM contributes intent, entity extraction,
-reference resolution ("Tuesday" → a previously offered slot), and wording. Everything else
-is Python. See [AGENTS.md](AGENTS.md).
+deterministic step(s) → render response**. The LLM contributes intent and entity
+extraction; everything else is Python, including every word the caller hears.
+
+Rules run first on every turn and are a complete implementation on their own — the model
+is asked when they come up empty, may fill a gap they missed, and may never overwrite a
+value they parsed. It is never sent the patient's record: only which question the agent
+asked, and, for appointment times, which times. Reference resolution ("Tuesday" → a
+previously offered slot) is deterministic for that reason. The reasoning and its costs
+are in [ADR 008](docs/decisions/008-model-understands-rules-decide.md); the division of
+labour is in [AGENTS.md](AGENTS.md).
 
 ## 7. Safety layer
 

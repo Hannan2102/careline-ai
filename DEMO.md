@@ -75,7 +75,7 @@ failures, an escalation to the front desk.
 
 ## Demo 7 — Browser voice *(paid, budget-controlled)*
 
-Demo 1 spoken through the browser: mic → Deepgram → agent → ElevenLabs → speaker.
+Demo 1 spoken through the browser: mic → Deepgram → agent → Deepgram Aura → speaker.
 Session capped by `MAX_ESTIMATED_SESSION_COST_USD`. Latency shown per stage in the
 dashboard. Target perceived turn latency 0.8–2.0 s. Keep it short.
 

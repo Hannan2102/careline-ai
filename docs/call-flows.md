@@ -2,6 +2,18 @@
 
 Each flow is an explicit state machine. States are named; transitions are testable.
 
+**The agent speaks first.** A call opens with the clinic's name and the fact that the
+caller is talking to software, before anything below has begun — a line that opens in
+silence leaves the caller guessing whether it connected, and the ones who guess wrong say
+"hello?", which carries no intent. It is speech, not a turn: it never reaches the
+orchestrator, and the caller can talk straight over it.
+
+**Three things happen around every flow below.** Safety runs before any of them and can
+end the turn on its own. A request the agent cannot serve is answered with an offer of a
+person rather than the capability menu. And no reply is ever given three times in a row —
+the third identical sentence becomes that same offer, whatever caused the repeat, because
+every loop found in a live call looked the same from the caller's side.
+
 ## Existing-patient booking
 
 ```mermaid
@@ -20,7 +32,7 @@ stateDiagram-v2
   WidenSearch --> OfferSlots
   WidenSearch --> Escalate: still none
   OfferSlots --> ConfirmChoice: patient selects
-  OfferSlots --> SearchSlots: none suitable
+  OfferSlots --> SearchSlots: none suitable (search moves past the days already offered)
   ConfirmChoice --> Book
   Book --> Confirmed: success
   Book --> SearchSlots: slot conflict

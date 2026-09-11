@@ -25,7 +25,7 @@ class TTSProvider(Protocol):
 |---|---|---|---|
 | STT | `DeepgramSTTProvider` ✅ | `WhisperSTTProvider` | `MockSTTProvider` ✅ |
 | LLM | `OpenAILLMProvider` ✅ (OpenAI **and** Groq) | `OllamaLLMProvider` | `MockLLMProvider` ✅ |
-| TTS | `GroqTTSProvider` ✅ · `ElevenLabsTTSProvider` ✅ | `PiperTTSProvider` | `MockTTSProvider` ✅ |
+| TTS | `DeepgramTTSProvider` ✅ · `GroqTTSProvider` ✅ · `ElevenLabsTTSProvider` ✅ | `PiperTTSProvider` | `MockTTSProvider` ✅ |
 
 The cloud adapters talk to their vendors over `httpx` (and `websockets` for Deepgram
 streaming) rather than through vendor SDKs. The surface used is a handful of endpoints

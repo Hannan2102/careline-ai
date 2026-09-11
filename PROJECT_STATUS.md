@@ -1,10 +1,23 @@
 # Project status
 
-*Last updated: 2026-09-09*
+*Last updated: 2026-09-11*
 
 ## Current phase
 
-**Phases 0–12 complete; Phase 13 built, awaiting a live microphone test.** The agent works end to end in text and the browser voice transport is built and verified at the socket level, what it does survives a restart, the dashboard makes every turn inspectable, and it reaches real models — verified live against Groq on 2026-09-09. Total spend to date: **$0.00**, and the voice stack keeps it there: Groq's free tier serves the model and the speech, Deepgram's $200 credit covers streaming recognition. ElevenLabs would have bought ~300 ms per turn for $6/month and was measured, then declined.
+**Phases 0–13 complete. Phase 14 (latency) measured and part-done.** The agent works end
+to end in text and by voice from a browser microphone, against real Deepgram recognition
+and real Groq inference. What it does survives a restart, the dashboard makes every turn
+inspectable, and the model now understands the whole conversation rather than only its
+first sentence.
+
+Since Phase 13 closed, the work has been almost entirely **conversation repair driven by
+recorded calls**: nineteen distinct bugs found by reading transcripts out of
+`careline.db`, not by writing tests first. That is worth stating plainly because it is
+the honest shape of building this — the test suite was green throughout, and none of the
+nineteen were things it occurred to me to test for until a real caller hit them.
+
+Total spend to date: **$0.51**, against a $20 ceiling. Groq's free tier serves the model
+and Deepgram serves both recognition and speech from its $200 credit.
 
 ## Completed
 
@@ -151,7 +164,7 @@
   fabricated `full_name: "John Doe", date_of_birth: "1990-05-15"`, which is why the
   measurement was worth taking before trusting a model with verification inputs.
 
-**Phase 13 — Browser voice** 🟡
+**Phase 13 — Browser voice** ✅
 - `TurnManager`: end-of-utterance detection, barge-in, silence re-prompt then graceful
   close, hard call limit, interim transcripts never acted on, and one in-flight turn per
   session with late finals queued rather than raced
@@ -170,6 +183,51 @@
   but what already crossed the socket is queued in the browser. `on_interrupt` fires
   before cancellation so the client drops it — without that, barge-in leaves the agent
   talking for another second, and no mocked test would catch it
+
+- **Verified from a browser microphone** on 2026-09-10, which is what closed the phase:
+  `getUserMedia` capture through an `AudioWorklet`, the agent's reply played back through
+  Web Audio, and a barge-in mid-sentence. Two bugs only that run could find — an
+  `AudioContext` that starts suspended outside a user gesture, so the page was silent
+  with no error, and a carry byte lost when a PCM frame split across reads, which turns
+  speech into static rather than raising anything
+
+**Phase 13.5 — Comprehension, and repairing the conversation** ✅ *(unplanned; it came
+out of listening to the calls)*
+
+The agent understood the first sentence of a call and then fell back on phrase tables for
+everything after it. The recorded turns show it exactly: classification took 300–700 ms
+on an opening line and one millisecond on every answer to a question the agent had asked,
+because the model was never consulted for those. Every phrasing that failed on a live
+call was a one-millisecond turn.
+
+- **The model is asked mid-conversation, when the rules came up empty.** Not otherwise:
+  when they have the answer — "the second one", "yes", a date of birth read off a card —
+  a round trip buys nothing and those are the turns where a delay is heard. When they do
+  not, the alternative was repeating the question, so latency has stopped competing with
+  a good answer. It is told which question was asked, and for appointment times, which
+  times; an empty slot in a diary is not information about a patient. What appointments
+  this caller has and what is on their prescription never leave the process (ADR 008)
+- **Out of scope is a thing the model can say** — understood perfectly, and not something
+  this line does. A complaint, a test result, notes to a solicitor: measured live, all
+  three. Two turns nothing can answer reaches the same place, because the capability menu
+  is a fair reply to "hello?" and a poor reply to anything twice
+- **The agent will not say the same sentence three times.** The last line of defence and
+  the only one that needs no diagnosis: every loop found on a live call looked identical
+  from the caller's side, whatever caused it. The third time, it offers a person
+- **A finished request lets the next one start.** Workflows kept the state of a request
+  that was already over, so a caller who booked, checked the booking, then asked to move
+  it got "What would you like to do with your appointment?" six times, whatever they said
+- **A question the agent asks is a question it remembers asking.** "Would you like to
+  book one?" is put by a workflow that then closes itself, so "yes please" reached the
+  menu
+- **74 phrasings, written down as a table first** (`tests/unit/test_phrasebook.py`), then
+  made to pass — 46 were misrouted. The routing rule is now longest-match-wins, which is
+  what the ordinal matcher had already had to learn: a flat table read in order answers
+  "which phrase did somebody list first", and that made "Did I book something?" open a
+  booking and "Got any cancellations?" cancel one
+- **The agent speaks first**, naming the clinic and saying it is automated. A line that
+  opens in silence leaves the caller guessing, and the ones who guess wrong open with
+  "hello?", which carries no intent
 
 ## What actually works — and how I know
 
@@ -280,6 +338,26 @@
 | Ending a call keeps the patient it was about | `test_an_ended_call_keeps_the_patient_it_was_about` |
 | A trailing "yes" does not make a call read as "unknown" | `test_the_last_meaningful_intent_is_shown` |
 
+| Every phrasing in the phrasebook routes where it should | `tests/unit/test_phrasebook.py` (74) |
+| None of them dead-ends in the capability menu | `TestNothingDeadEnds` |
+| A request for a person is heard however it is phrased | `TestAskingForAPerson` |
+| The model may fill a gap and never overwrite a parsed value | `tests/unit/test_llm_extraction.py` |
+| Every way a model can fail lands back on the rules | `TestTheRulesAreTheFloor` |
+| The model is not asked when the rules already answered | `TestTheModelIsAskedMidConversation` |
+| It is never sent the record — only which question was asked | `test_it_is_never_told_what_the_options_were` |
+| An implausible position from the model is dropped | `TestAPositionIsNotJustANumber` |
+| A finished request starts the next one cleanly | `tests/workflows/test_second_request.py` |
+| A verified caller is not asked to verify again | `TestAVerifiedCallerIsNotAskedAgain` |
+| A day the caller names decides which appointment, or nothing does | `tests/workflows/test_choosing_an_appointment.py` |
+| Stale offers from an earlier request resolve nothing | `TestStaleOffersDoNotResolveAChoice` |
+| "None of those" offers times they have not refused | `test_rejecting_every_offer_offers_different_times` |
+| Saying yes to an offer the agent made does what it offered | `tests/workflows/test_offers_and_handover.py` |
+| Two turns nothing can answer offers a person | `TestOfferingAPerson` |
+| The same sentence is never said three times | `TestSayingTheSameThingTwice` |
+| Changing the subject mid-flow is the model's call alone | `TestChangingTheSubject` |
+| The agent greets the caller, and the silence timer starts after it | `TestSpeakingFirst` |
+| An abbreviated month is a date, not a name | `TestADateIsNotAName` |
+
 **Verified live on 2026-09-09**, over the real WebSocket against real Deepgram and real
 Groq: three spoken utterances in, four turns, one genuine barge-in, 11 seconds of agent
 speech back. Time from a final transcript to the first byte of the agent's reply was
@@ -300,8 +378,8 @@ window is more robust and slower), and tuning without measurement is guessing.
 ## Last test results
 
 ```
-677 passed in 45.7s   (full suite, both EHR providers)
-619 passed in  6.0s   (offline suite: -m "not integration and not paid")
+1254 passed in 89s   (full suite, both EHR providers, live HAPI)
+1041 passed in 17s   (offline suite: -m "not integration")
 ```
 
 Try it: `python scripts/text_chat.py --script demo1 --trace`
@@ -309,7 +387,7 @@ Try it: `python scripts/text_chat.py --script demo1 --trace`
 - The HAPI suite runs against a live FHIR 4.0.1 server via `make test-int`; it skips
   automatically when no server is reachable, so the default suite stays offline.
 - 2 warnings = third-party deprecations (starlette/anyio), not project code.
-- `ruff check` clean · `ruff format` clean · `mypy` strict clean across 93 source files.
+- `ruff check` clean · `ruff format` clean · `mypy` strict clean across 98 source files.
 - Dashboard: `eslint` clean · `tsc --noEmit` (strict, `noUncheckedIndexedAccess`) clean ·
   `next build` clean.
 - Zero network calls, zero cost.
@@ -334,10 +412,13 @@ Try it: `python scripts/text_chat.py --script demo1 --trace`
 5. **Name + DOB remains weak authentication**, as SAFETY.md states. The second factor is
    requested only on ambiguity, not always — matching common clinic practice, not good
    security. A real deployment needs more.
-6. **Extraction is rule-based.** It handles the demo phrasings and the obvious
-   variations, and it will miss paraphrases no rule anticipated — the failure mode is
-   "I didn't understand", never a wrong action, because safety runs before extraction.
-   The LLM extractor in Phase 12 is what makes this robust.
+6. **Extraction is rules first, model second** (ADR 008). The rules are the floor and
+   run on every turn; the model is asked when they come up empty, may fill a gap but
+   never overwrite a value they parsed, and cannot be reached at all by a clinical
+   question because safety runs before extraction. The failure mode remains "I didn't
+   understand", never a wrong action. What the rules still own outright — dates, spoken
+   digits, ordinals resolved against a list — they own because they have been hardened
+   against real calls and a model has not.
 7. **Safety detection is phrase-based.** It will miss paraphrases no rule anticipates —
    testing caught exactly that with "ending my life" against a literal "end my life", now
    fixed with inflection-aware patterns. The model-flag layer exists to cover the gap, and
@@ -376,16 +457,42 @@ Try it: `python scripts/text_chat.py --script demo1 --trace`
    the Desktop and rebuilding the venv, `ssl.create_default_context()` loads 128 CA
    certificates and a verified TLS handshake to `api.openai.com` succeeds. Worth knowing
    because it is invisible: an evicted file has the right name, path, and permissions.
-15. **`EHRProvider` now has two reads not scoped to one patient** — `list_patients` and
+15. **Groq's free tier allows 8,000 tokens a minute**, which is roughly sixteen
+   classifications. A real call is nowhere near it — one classification per turn, turns
+   ten seconds apart — but a test script run end to end without pauses is well over, and
+   every call past the limit falls back to the rules. That is the fallback working, and
+   it looks exactly like the model getting worse, which cost an hour before the log was
+   read properly. Leave a minute between scripted calls.
+16. **A description is not a drug name, and the model will offer one anyway.** "The one
+   for my sugar" arrives as a prescription named "sugar". The workflows now read the
+   record back and ask rather than acting on it, and nothing maps a description to a
+   drug: deciding that "the sugar one" is the metformin is a clinical inference, and the
+   wrong one reads out the wrong dosage. The cost is that those phrasings take an extra
+   turn, and after two the caller is offered a person.
+17. **Changing the subject mid-workflow needs the model.** With `AI_MODE=mock`, or when
+   the vendor is rate-limited, "actually, sort out my repeat while I'm on" is answered by
+   the question the agent asked before it. The rules cannot tell that from a clumsy
+   answer, and guessing wrong throws away a booking half made.
+18. **`EHRProvider` now has two reads not scoped to one patient** — `list_patients` and
    `list_appointments`, for the dashboard. Nothing in the agent runtime calls them, and a
    caller-facing path that could would defeat verification entirely. That constraint is
    currently a comment on the interface and a code review, not something enforced.
 
 ## Next tasks
 
-1. **Phase 12 — cloud AI providers.** The first phase that can spend money. The budget
-   guard, the persisted ledger, and the carried-forward baseline all exist precisely so
-   that this phase cannot quietly run past $20.
+1. **Phase 14 — latency.** Baseline measured: median perceived turn **0.38 s**, of which
+   TTS first-audio is **353 ms median** — about 93% of it, and the only stage outside its
+   budget. Deepgram's streaming synthesis websocket is the identified lever; the phase
+   closes on one optimisation with a before/after.
+2. **Deepgram keyword boosting** for the patient roster and the drug names. "Linda
+   Newhan", "Fifth John Smith" and "metamorphine" are all recognition errors that every
+   layer downstream then has to be robust to, and boosting is the fix at the source.
+3. **Deepgram splitting an utterance mid-sentence** — "Can you tell me how much" /
+   "metamorphine should I take?" arrived as two turns, and the safety layer then refused
+   the fragment. Endpointing is a tuning trade-off and tuning without measurement is
+   guessing.
+4. Phases 15–18: Twilio telephony, the Epic sandbox adapter, the local-model path, and
+   the polished demo.
 
 ## Architecture decisions
 
@@ -398,6 +505,7 @@ Try it: `python scripts/text_chat.py --script demo1 --trace`
 | [005](docs/decisions/005-text-vs-voice-testing.md) | Text mode is the primary test surface |
 | [006](docs/decisions/006-budget-controls.md) | Budget enforced in software |
 | [007](docs/decisions/007-voice-transport.md) | A plain WebSocket for browser audio, not WebRTC |
+| [008](docs/decisions/008-model-understands-rules-decide.md) | The model understands; the rules decide |
 
 One deliberate deviation from the original specification: **`create_refill_request` is not
 on the `EHRProvider` interface.** A refill request is a workflow artifact awaiting
@@ -411,22 +519,33 @@ in the application schema and remains a first-class agent tool. Reasoning in
 ```
 APP_ENV=development
 EHR_PROVIDER=memory        # 'local' for HAPI
-AI_MODE=mock               # no paid provider can be constructed
-LLM_PROVIDER=mock  STT_PROVIDER=mock  TTS_PROVIDER=mock
-TEXT_ONLY_MODE=true  VOICE_ENABLED=false  STT_ENABLED=false  TTS_ENABLED=false
+AI_MODE=cloud              # 'mock' makes a paid provider impossible to construct
+LLM_PROVIDER=groq  STT_PROVIDER=deepgram  TTS_PROVIDER=deepgram
+TEXT_ONLY_MODE=false  STT_ENABLED=true  TTS_ENABLED=true
 ```
+
+The whole automated test suite runs with `AI_MODE=mock`, which `tests/conftest.py` sets
+before anything imports settings — so no test can reach a vendor whatever the developer's
+`.env` says. Worth knowing when a script imports from `tests.conftest` for a fixture and
+then wonders why the model appears to have stopped working.
 
 ## Cost
 
 | | |
 |---|---|
-| Estimated project spend to date | **$0.00** |
+| Estimated project spend to date | **$0.51** |
 | Warning threshold | $15.00 |
 | Ceiling | $20.00 |
-| Remaining | **$20.00** |
+| Remaining | **$19.49** |
 | Budget status | `ok` |
-| Provider usage | none — no paid API has been called |
 
-No OpenAI, Deepgram, ElevenLabs, LiveKit, or Twilio call has been made at any point.
-Phase 1 needed none, and the default configuration makes one impossible. Check anytime
-with `make budget`.
+| Provider | Metric | Quantity | Cost |
+|---|---|---|---|
+| Deepgram | streaming recognition | 649 s | $0.06 |
+| Deepgram | speech synthesis | 14,824 characters | $0.44 |
+| Groq | inference (free tier) | 17,333 tokens over 37 requests | $0.00 |
+| Groq | speech synthesis (free tier) | 1,687 characters | $0.00 |
+
+Both Deepgram lines are drawn against its $200 credit rather than billed. Groq's free
+tier serves the model, which is why an agent that now calls one on most turns still costs
+nothing per turn. Check anytime with `make budget`.

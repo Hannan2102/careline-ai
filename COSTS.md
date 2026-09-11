@@ -23,7 +23,7 @@ afterthought.
 | WebSocket transport (ADR 007) | $0 |
 | GitHub | free tier |
 | **OpenAI** | **~$7** |
-| **Deepgram** | **$0** — $200 free credit, no card |
+| **Deepgram** (recognition *and* Aura speech) | **$0.51 so far** — against a $200 free credit, no card |
 | **Groq** (LLM *and* speech) | **$0** — free tier |
 | ~~ElevenLabs~~ | not used — see below |
 | Contingency | $0–$5 |
@@ -236,9 +236,29 @@ paid API is used.
 |---|---|---|---|---|
 | 2026-09-09 | Groq | Live smoke test, `openai/gpt-oss-20b` (76 in / 17 out) | $0.00 | **$0.00** |
 | 2026-09-09 | Groq | Extraction probe, 5 utterances (853 in / 262 out) | $0.00 | **$0.00** |
+| 2026-09-09 | Deepgram | Streaming recognition, first live voice call | $0.01 | **$0.01** |
+| 2026-09-10 | Deepgram | Aura speech synthesis, after Groq's daily TTS cap was hit mid-call | $0.19 | **$0.20** |
+| 2026-09-11 | Deepgram | Recognition and speech across the live-call debugging sessions | $0.31 | **$0.51** |
+| 2026-09-11 | Groq | Classification, 37 requests (14,033 in / 3,300 out) | $0.00 | **$0.51** |
 
-**Nothing billable has been spent.** Both entries are Groq's free tier: metered, priced at
-zero, rate-limited by the vendor. No OpenAI, Deepgram, or ElevenLabs call has ever been
-made from this repository.
+**$0.51 spent, all of it Deepgram, all of it against its $200 credit rather than billed.**
+Groq's free tier still serves both the model and — as a fallback — speech, which is why
+an agent that now calls a model on most turns costs nothing per turn.
 
-The first billable call will appear here with its *measured* cost, not an estimate.
+The switch to Deepgram Aura for synthesis was not a preference. Groq's free TTS tier is
+capped at 3,600 characters a day, and hitting it mid-call fell back to the mock provider,
+which is *silence* — the agent appeared to answer and the caller heard nothing. A paid
+path that works beats a free one that fails quietly, and the fallback now announces
+itself over the socket as a `notice` rather than pretending to speak.
+
+Every figure above is *measured* from the vendor's own response headers, not estimated.
+Check anytime with `make budget`.
+
+## A limit that is not about money
+
+Groq's free tier allows **8,000 tokens a minute**, which is roughly sixteen
+classifications. A real call is nowhere near it — one classification per turn, turns ten
+seconds apart. A test script run end to end without pauses is well over it, and every
+call past the limit falls back to the rules, which looks exactly like the model getting
+worse rather than being throttled. Leave a minute between scripted calls, and read the
+log before concluding anything about quality.

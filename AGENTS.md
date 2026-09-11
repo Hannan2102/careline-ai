@@ -18,11 +18,18 @@ is used where language understanding is genuinely required, and nowhere else.
 ## What the LLM does — and does not
 
 **LLM is appropriate for**
-- intent recognition
+- intent recognition, including mid-conversation when the rules cannot parse an answer
 - entity extraction (names, dates, medication mentions, appointment reasons)
-- resolving conversational references — "Tuesday", "the second one", "the same doctor"
-- choosing among the available workflows
+- resolving conversational references the rules cannot — "whichever is soonest", "the one
+  right after the first". The ones they *can* — "Tuesday", "the second one" — stay theirs,
+  because they resolve against the list actually offered and a model would be guessing
+- judging that a caller has changed the subject, or asked for something this line does
+  not do at all
 - natural conversational wording of an already-decided response
+
+**And it is asked only when it would say something new.** When the rules have already
+answered the question the agent asked, a round trip costs 400 ms on exactly the turns
+where a caller hears a delay, and returns what is already in hand.
 
 **Deterministic code owns**
 - verification state and authorisation

@@ -211,14 +211,16 @@ fourth implementation.
 
 ---
 
-### 🟡 Phase 13 — Browser voice
+### ✅ Phase 13 — Browser voice
 Browser mic → STT → agent → TTS → speaker.
 
 **Acceptance**
 - [x] The whole voice loop runs over the real transport — real speech in through
       Deepgram, the agent's reply back as Groq speech, with a barge-in on the way
-- [ ] Driven from an actual browser microphone. Everything above the microphone is
-      verified; the browser's own capture path is not
+- [x] Driven from an actual browser microphone — verified 2026-09-10. Two bugs only that
+      run could find: an `AudioContext` that starts suspended outside a user gesture, so
+      the page was silent with no error, and a carry byte lost when a PCM frame split
+      across reads, which turns speech into static rather than raising
 - [x] Barge-in, silence, and timeout handled by the turn manager
 - [x] Voice changes no business logic
 - [x] Session cost cap enforced live
@@ -240,13 +242,40 @@ that, barge-in leaves the agent talking for another second.
 
 ---
 
-### ⬜ Phase 14 — Latency optimisation
+### ✅ Phase 13.5 — Comprehension and conversation repair *(unplanned)*
+Understanding the whole call, not just its first sentence.
+
+Not in the original eighteen. It came out of reading recorded calls back from
+`careline.db`: nineteen bugs, none of which the green test suite had thought to ask
+about. The pattern in the data was stark — classification took 300–700 ms on an opening
+line and one millisecond on every answer to a question the agent had asked, because the
+model was switched off for those, and the phrasings that failed were the
+one-millisecond turns.
+
+**Acceptance**
+- [x] The model classifies mid-conversation, when the rules came up empty (ADR 008)
+- [x] The rules remain a complete implementation on their own, and every model failure
+      lands back on them
+- [x] The record never reaches the model — only which question was asked
+- [x] A request the agent cannot serve offers a person rather than the menu
+- [x] The agent never says the same sentence three times
+- [x] A finished request lets the next one start; a caller can change the subject
+- [x] 74 phrasings written down first, then made to pass — 46 were misrouted
+
+---
+
+### 🟡 Phase 14 — Latency optimisation
 Measure, then optimise.
 
 **Acceptance**
-- Per-stage latency recorded for every turn and visible in the dashboard
-- Median perceived turn latency within 0.8–2.0 s on the demo scenarios
-- Each optimisation references a before/after measurement
+- [x] Per-stage latency recorded for every turn and visible in the dashboard
+- [x] Median perceived turn latency within 0.8–2.0 s on the demo scenarios — measured at
+      **0.38 s** median
+- [ ] Each optimisation references a before/after measurement
+
+The baseline says where the work is: TTS first-audio is **353 ms median**, about 93% of
+the perceived turn and the only stage outside its budget. Deepgram's streaming synthesis
+websocket is the lever.
 
 ---
 

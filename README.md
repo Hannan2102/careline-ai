@@ -77,17 +77,23 @@ Twilio path: **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
 ## Current status
 
-**Phases 0–11 of 18.** See [PROJECT_STATUS.md](PROJECT_STATUS.md) for the authoritative,
-continuously-updated status, and [ROADMAP.md](ROADMAP.md) for phase acceptance criteria.
+**Phases 0–13 of 18 complete; Phase 14 in progress.** See
+[PROJECT_STATUS.md](PROJECT_STATUS.md) for the authoritative, continuously-updated
+status, and [ROADMAP.md](ROADMAP.md) for phase acceptance criteria.
 
-Working today, end to end in text, at $0:
+Working today, end to end in text **and by voice from a browser microphone**:
 
 - `EHRProvider` interface + two implementations — `MemoryFHIRProvider` (no Docker) and
   `LocalFHIRProvider` (HAPI FHIR R4 over REST) — held to one contract suite
 - Session-scoped verification, and access control that refuses on both the unverified and
   the mismatched-patient case
-- Booking, rescheduling, cancellation, medication lookup, refill requests, clinic FAQ
+- Booking, rescheduling, cancellation, medication lookup, refill requests, insurance
+  cover, clinic FAQ
 - A safety layer that refuses clinical questions and escalates them with context
+- Voice over a WebSocket: Deepgram streaming recognition in, Deepgram Aura speech out,
+  barge-in, silence handling, and a spending cap enforced *during* the call
+- Understanding by model with rules as the floor (ADR 008): the model classifies, and
+  deterministic Python decides, reads records, and writes every word the caller hears
 - An agent runtime with a full per-turn trace, and a text CLI (`make chat`)
 - Persistence of sessions, turns, audit events, escalations, refills, and metered spend
 - An admin dashboard: overview, calls, agent trace, patients, appointments, escalations
@@ -100,7 +106,7 @@ Phases 15–18 and are deliberately *not* stubbed with fake behaviour.
 **Backend** Python 3.12, FastAPI, Pydantic v2, SQLAlchemy (async), httpx
 **Frontend** Next.js, React, TypeScript (strict), Tailwind
 **Data** PostgreSQL, HAPI FHIR R4, Synthea for bulk synthetic patients
-**AI (cloud)** Groq or OpenAI (LLM + tool calling), Deepgram (STT), Groq/Orpheus or ElevenLabs (TTS)
+**AI (cloud)** Groq or OpenAI (LLM), Deepgram (STT), Deepgram Aura or Groq/Orpheus (TTS)
 **AI (local, future)** Ollama/Qwen3, faster-whisper, Piper
 **Voice** WebSocket + Web Audio in the browser (ADR 007); Twilio + SIP later
 **Ops** Docker Compose, GitHub Actions, ruff, mypy, pytest
@@ -111,20 +117,20 @@ see [docs/provider-abstraction.md](docs/provider-abstraction.md).
 ## Cost
 
 Total initial development budget: **$15–$20**, enforced in software, not by discipline.
+**Spent to date: $0.51.**
 
 | | |
 |---|---|
 | HAPI FHIR, PostgreSQL, Synthea, Docker, FastAPI, Next.js | $0 |
-| LiveKit, GitHub | free tier |
-| OpenAI | ~$7 |
-| Deepgram | ~$4 |
-| ElevenLabs | ~$4 |
-| Contingency | $0–$5 |
+| Groq — inference and speech, free tier | $0.00 |
+| Deepgram — streaming recognition + Aura speech, against its $200 credit | $0.51 |
+| Remaining against the ceiling | $19.49 |
 
-~90–95% of development happens in **text mode**, which makes zero paid calls. Voice APIs
-are reserved for a handful of short final demos. Usage is metered per provider, costed,
-and a **budget guard** blocks optional paid calls at the ceiling. Details and the
-tracking schema: **[COSTS.md](COSTS.md)**.
+Most development happens in **text mode**, which makes zero paid calls, and the default
+configuration cannot construct a paid provider at all. Usage is metered per provider from
+the vendor's own numbers, costed, and a **budget guard** blocks optional paid calls at
+the ceiling — carried forward across restarts, so the $20 means *this project* rather
+than *this boot*. Details and the tracking schema: **[COSTS.md](COSTS.md)**.
 
 ## Local setup
 
