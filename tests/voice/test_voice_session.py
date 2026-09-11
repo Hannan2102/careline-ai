@@ -234,3 +234,77 @@ class TestLiveCostCap:
         await voice.run(chunks(1))
         assert voice.budget_exhausted is False
         assert len(tts.spoken) == 1
+
+
+class TestLatencyInstrumentation:
+    """The two stages only voice has (Phase 14).
+
+    `stt_ms` and `tts_first_audio_ms` have existed on the trace, the turn row
+    and the dashboard since Phase 11 -- and were never written by anything, so
+    every turn showed a blank where the speech latency should be. Phase 14
+    begins by measuring, and this is the measurement.
+    """
+
+    @staticmethod
+    def _collector() -> tuple[list[tuple[str, float | None, float | None]], object]:
+        seen: list[tuple[str, float | None, float | None]] = []
+
+        async def sink(turn_id: str, stt_ms: float | None, tts_ms: float | None) -> None:
+            seen.append((turn_id, stt_ms, tts_ms))
+
+        return seen, sink
+
+    @pytest.mark.asyncio
+    async def test_both_stages_are_reported_against_the_turn(
+        self, orchestrator: Orchestrator
+    ) -> None:
+        seen, sink = self._collector()
+        voice, _tts, _out = build(orchestrator, ["Are you open on Saturday?"])
+        voice.timings_sink = sink  # type: ignore[assignment]
+
+        await voice.run(chunks(1))
+
+        assert len(seen) >= 1, "no speech latency was reported at all"
+        turn_id, stt_ms, tts_ms = seen[0]
+        assert turn_id.startswith("turn-"), f"reported against {turn_id!r}, not a turn"
+        assert stt_ms is not None and stt_ms >= 0.0
+        assert tts_ms is not None and tts_ms >= 0.0
+
+    @pytest.mark.asyncio
+    async def test_the_turn_id_matches_the_turn_that_was_run(
+        self, orchestrator: Orchestrator
+    ) -> None:
+        """A latency attached to the wrong turn is worse than none.
+
+        The whole point of Phase 14 is that an optimisation cites a
+        before/after from real turns, which requires knowing which turn.
+        """
+        seen, sink = self._collector()
+        voice, _tts, _out = build(orchestrator, ["Are you open on Saturday?"])
+        voice.timings_sink = sink  # type: ignore[assignment]
+
+        await voice.run(chunks(1))
+
+        assert seen[0][0] == voice.manager.last_turn_id
+
+    @pytest.mark.asyncio
+    async def test_a_session_without_a_sink_still_runs(self, orchestrator: Orchestrator) -> None:
+        """Persistence is optional, so the measurement has to be too."""
+        voice, tts, _out = build(orchestrator, ["Are you open on Saturday?"])
+        assert voice.timings_sink is None
+        await voice.run(chunks(1))
+        assert tts.spoken, "the call did not complete without a timings sink"
+
+    @pytest.mark.asyncio
+    async def test_a_failing_sink_does_not_break_the_call(self, orchestrator: Orchestrator) -> None:
+        """A caller is on the phone; a latency number is never worth a dropped call."""
+
+        async def exploding(turn_id: str, stt_ms: float | None, tts_ms: float | None) -> None:
+            raise RuntimeError("metrics backend is down")
+
+        voice, tts, _out = build(orchestrator, ["Are you open on Saturday?"])
+        voice.timings_sink = exploding  # type: ignore[assignment]
+
+        await voice.run(chunks(1))
+
+        assert tts.spoken, "a broken metrics sink took the call down with it"

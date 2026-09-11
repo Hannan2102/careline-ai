@@ -415,3 +415,27 @@ __all__ = [
     "upsert_refill_requests",
     "upsert_session",
 ]
+
+
+async def update_turn_voice_timings(
+    db: AsyncSession,
+    turn_id: str,
+    stt_ms: float | None = None,
+    tts_first_audio_ms: float | None = None,
+) -> None:
+    """Fill in the two stages that are only known after the turn is written.
+
+    The turn row is inserted when the orchestrator finishes deciding, which is
+    necessarily before a word has been synthesised -- so the speech stages
+    cannot be part of that insert. They arrive here instead, keyed by the turn
+    they belong to.
+    """
+    row = await db.get(TurnRow, turn_id)
+    if row is None:
+        # The turn was never written (a persistence failure is logged, not
+        # raised, so the call can continue). Nothing to annotate.
+        return
+    if stt_ms is not None:
+        row.stt_ms = stt_ms
+    if tts_first_audio_ms is not None:
+        row.tts_first_audio_ms = tts_first_audio_ms

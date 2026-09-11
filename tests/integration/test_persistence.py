@@ -126,6 +126,51 @@ class TestTurnPersistence:
             assert row.total_ms > 0
             assert row.safety_ms >= 0
 
+    async def test_voice_stage_latencies_are_filled_in_after_the_turn(
+        self, runtime: Runtime, database: Database
+    ) -> None:
+        """The speech stages are written by a second, later update.
+
+        They cannot be part of the insert: the turn row is written when the
+        orchestrator has decided, and the first audio byte does not exist until
+        after that. Before Phase 14 nothing wrote them at all, so the dashboard
+        showed a blank for every voice turn.
+        """
+        session = runtime.sessions.create()
+        result = await runtime.orchestrator.handle_turn(session, "Are you open on Saturday?")
+
+        async with database.session() as db:
+            row = (await db.execute(select(TurnRow))).scalar_one()
+            assert row.stt_ms is None, "nothing should have reported speech stages yet"
+            assert row.tts_first_audio_ms is None
+
+        assert runtime.persistence is not None
+        await runtime.persistence.record_voice_timings(
+            result.trace.turn_id, stt_ms=182.5, tts_first_audio_ms=406.0
+        )
+
+        async with database.session() as db:
+            row = (await db.execute(select(TurnRow))).scalar_one()
+            assert row.stt_ms == 182.5
+            assert row.tts_first_audio_ms == 406.0
+            # The rest of the turn must survive the update untouched.
+            assert row.total_ms > 0
+            assert row.utterance == "Are you open on Saturday?"
+
+    async def test_timings_for_an_unknown_turn_are_ignored(
+        self, runtime: Runtime, database: Database
+    ) -> None:
+        """A turn whose write failed still gets spoken, and still reports.
+
+        Persistence failures are logged rather than raised, so the voice layer
+        can legitimately report against a turn that was never written.
+        """
+        assert runtime.persistence is not None
+        await runtime.persistence.record_voice_timings("turn-never-written", stt_ms=1.0)
+
+        async with database.session() as db:
+            assert (await db.execute(select(TurnRow))).scalars().all() == []
+
     async def test_persisted_turns_carry_no_identifiers(
         self, runtime: Runtime, database: Database
     ) -> None:

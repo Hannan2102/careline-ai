@@ -28,6 +28,7 @@ from app.db.repositories import (
     insert_escalations,
     insert_turn,
     insert_usage,
+    update_turn_voice_timings,
     upsert_refill_requests,
     upsert_session,
 )
@@ -92,6 +93,37 @@ class PersistenceService:
         self._escalation_mark += len(escalations)
         self._refill_mark += len(refills)
         self._usage_mark += len(usage)
+
+    async def record_voice_timings(
+        self,
+        turn_id: str,
+        stt_ms: float | None = None,
+        tts_first_audio_ms: float | None = None,
+    ) -> None:
+        """Annotate a written turn with the speech stages around it.
+
+        Separate from ``flush_turn`` because of when the numbers exist: the
+        turn row is written the moment the orchestrator has decided, and the
+        first audio byte is produced after that. Rather than delay the turn --
+        which would delay the dashboard, and couple the orchestrator to a
+        transport it is not supposed to know about (ADR 005) -- the voice layer
+        reports its own stages here, against the turn it just ran.
+        """
+        if stt_ms is None and tts_first_audio_ms is None:
+            return
+        try:
+            async with self.database.session() as db:
+                await update_turn_voice_timings(
+                    db, turn_id, stt_ms=stt_ms, tts_first_audio_ms=tts_first_audio_ms
+                )
+        except Exception as exc:
+            # Same rule as flush_turn: a caller is on the phone, and a latency
+            # number is never worth breaking a call over.
+            logger.error(
+                "voice_timings_persistence_failed",
+                turn_id=turn_id,
+                error=str(exc),
+            )
 
     async def flush_session_end(self, session: SessionState) -> None:
         """Record that a session closed."""

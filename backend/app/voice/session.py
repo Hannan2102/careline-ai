@@ -58,6 +58,7 @@ class VoiceSession:
         on_close: Callable[[CloseReason], Awaitable[None]] | None = None,
         on_interrupt: Callable[[], Awaitable[None]] | None = None,
         drain: Callable[[], Awaitable[None]] | None = None,
+        timings_sink: Callable[[str, float | None, float | None], Awaitable[None]] | None = None,
     ) -> None:
         self.session = session
         self.stt = stt
@@ -76,6 +77,23 @@ class VoiceSession:
         #: A transport that plays in real time supplies this; a test that
         #: counts bytes does not need it.
         self.drain = drain
+        #: Where the speech-stage latencies go: ``(turn_id, stt_ms, tts_ms)``.
+        #:
+        #: A callable rather than the persistence service itself, so this class
+        #: stays testable without a database and the numbers can be sent
+        #: somewhere else entirely (a metrics sink) without touching it.
+        self.timings_sink = timings_sink
+
+        #: Wall-clock of the last audio frame handed to the recogniser, and the
+        #: recognition lag derived from it when a final transcript lands.
+        #:
+        #: This is the honest measure of STT latency: how long after the caller
+        #: stopped making sound we knew what they said. It deliberately does
+        #: not include our own end-of-utterance wait, which is a policy choice
+        #: in TurnTimings rather than anything the recogniser did
+        #: (docs/latency.md).
+        self._last_audio_at: float | None = None
+        self._pending_stt_ms: float | None = None
 
         self.manager = TurnManager(
             session=session,
@@ -102,9 +120,13 @@ class VoiceSession:
         self.manager.start()
         ticker = asyncio.create_task(self._tick_forever())
         try:
-            async for transcript in self.stt.transcribe_stream(audio):
+            async for transcript in self.stt.transcribe_stream(self._timed(audio)):
                 if self.manager.state is VoiceState.CLOSED:
                     break
+                if transcript.is_final and self._last_audio_at is not None:
+                    self._pending_stt_ms = (
+                        asyncio.get_running_loop().time() - self._last_audio_at
+                    ) * 1000
                 await self.manager.on_transcript(transcript)
         finally:
             ticker.cancel()
@@ -148,11 +170,42 @@ class VoiceSession:
             return
         await self._emit(text)
 
+    async def _timed(self, audio: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
+        """Pass audio through, remembering when the last frame went in."""
+        loop = asyncio.get_running_loop()
+        async for chunk in audio:
+            self._last_audio_at = loop.time()
+            yield chunk
+
     async def _emit(self, text: str) -> None:
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        first_audio_ms: float | None = None
         async for chunk in self.tts.synthesize_stream(text, self.voice):
+            if first_audio_ms is None:
+                # Time to the *first* byte, not the last: what the caller
+                # experiences as the gap before the agent starts talking.
+                first_audio_ms = (loop.time() - started) * 1000
             await self.audio_out(chunk)
+        await self._report_timings(first_audio_ms)
         if self.drain is not None:
             # Cancelled by barge-in along with the rest of the speak task,
             # which is what makes an interruption immediate rather than
             # waiting out audio the caller has already talked over.
             await self.drain()
+
+    async def _report_timings(self, tts_first_audio_ms: float | None) -> None:
+        """Attach the speech stages to the turn that produced them.
+
+        Reported before the drain, so a barge-in that cancels playback still
+        records how long the agent took to start speaking -- the number is no
+        less true for the caller having interrupted it.
+        """
+        turn_id = self.manager.last_turn_id
+        if self.timings_sink is None or turn_id is None:
+            return
+        stt_ms, self._pending_stt_ms = self._pending_stt_ms, None
+        try:
+            await self.timings_sink(turn_id, stt_ms, tts_first_audio_ms)
+        except Exception as exc:
+            logger.warning("voice_timings_report_failed", turn_id=turn_id, error=str(exc))

@@ -28,7 +28,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -155,6 +155,7 @@ async def voice_socket(websocket: WebSocket) -> None:
         on_close=on_close,
         on_interrupt=on_interrupt,
         drain=drain,
+        timings_sink=_timings_sink(runtime),
     )
 
     await _send_json(
@@ -237,6 +238,26 @@ async def _drain(audio: asyncio.Queue[bytes | None]) -> AsyncIterator[bytes]:
         if chunk is None:
             return
         yield chunk
+
+
+def _timings_sink(
+    runtime: Any,
+) -> Callable[[str, float | None, float | None], Awaitable[None]] | None:
+    """Route the voice stage latencies to persistence, if it is switched on.
+
+    Returns ``None`` when it is not, so a run without a database is not paying
+    to discover that on every turn.
+    """
+    persistence = getattr(runtime, "persistence", None)
+    if persistence is None:
+        return None
+
+    async def sink(turn_id: str, stt_ms: float | None, tts_first_audio_ms: float | None) -> None:
+        await persistence.record_voice_timings(
+            turn_id, stt_ms=stt_ms, tts_first_audio_ms=tts_first_audio_ms
+        )
+
+    return sink
 
 
 def _is_hangup(text: str) -> bool:

@@ -369,8 +369,15 @@ class SlowOrchestrator:
         self.utterances.append(utterance)
         await self.release.wait()
 
+        class _Trace:
+            # The manager reads the turn id off the trace so the transport can
+            # attribute its speech latencies to the turn (Phase 14). A double
+            # standing in for TurnResult has to carry one.
+            turn_id = "turn-double"
+
         class _Result:
             message = "All right."
+            trace = _Trace()
 
         return _Result()
 

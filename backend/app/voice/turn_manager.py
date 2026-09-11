@@ -103,6 +103,13 @@ class TurnManager:
         self.state = VoiceState.LISTENING
         self.stats = TurnManagerStats()
         self.close_reason: CloseReason | None = None
+        #: The turn the orchestrator most recently produced.
+        #:
+        #: Exposed so the transport can attribute its own stage latencies to a
+        #: turn without the manager having to know what those stages are. Left
+        #: set after the turn ends: the reply is spoken afterwards, and that is
+        #: precisely when the speech timings become known.
+        self.last_turn_id: str | None = None
 
         self._buffer: list[str] = []
         self._pending: list[str] = []
@@ -247,6 +254,9 @@ class TurnManager:
             self._record("turn_started", utterance[:80])
 
             result = await self.orchestrator.handle_turn(self.session, utterance, now=moment)
+            # Before speaking, so the speech stages measured during `_say` can
+            # be attributed to the turn that caused them.
+            self.last_turn_id = result.trace.turn_id
             await self._say(result.message)
 
             if not self.session.is_active:
