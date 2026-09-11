@@ -201,10 +201,53 @@ export class VoiceClient {
         this.events.onStatus("error", "Audio buffer overran — playback was dropped.");
       }
     };
+    await this.resumePlayback();
+  }
+
+  /**
+   * Start the playback clock, which does not start on its own.
+   *
+   * An `AudioContext` constructed outside a user gesture begins `suspended`,
+   * and a suspended context plays nothing while accepting every sample it is
+   * given — silence that looks, from the server's side, exactly like a working
+   * call. This one is built when the server's `ready` arrives, which is a
+   * network event rather than a click, so it needs resuming explicitly.
+   *
+   * That it worked at all before was luck: Chrome waives the requirement for
+   * origins with enough media-engagement history, so the bug only appears on a
+   * browser profile that has not used the page much — or one whose site data
+   * was just cleared, which is how it was found.
+   *
+   * `getUserMedia` has already been granted by this point, which is what makes
+   * the resume succeed without a second click. If it somehow does not, that is
+   * said out loud rather than left as silence.
+   */
+  private async resumePlayback(): Promise<void> {
+    const context = this.playback;
+    if (!context || context.state === "running") return;
+    try {
+      await context.resume();
+    } catch {
+      // Reported below, from the state rather than the exception: a rejected
+      // resume and a silently-still-suspended one are the same problem.
+    }
+    // Read through a widened type: `resume()` is exactly what changes `state`,
+    // but the compiler narrowed it above and does not model the mutation, so
+    // it considers the re-check impossible.
+    if ((context.state as AudioContextState) !== "running") {
+      this.events.onStatus(
+        "error",
+        "The browser is blocking audio playback. Click the page, then start the call again.",
+      );
+    }
   }
 
   private enqueue(pcm: ArrayBuffer): void {
     if (!this.player) return;
+    // A context can also be suspended *after* it started — backgrounding the
+    // tab does it. Audio arriving is the moment that matters, so it is checked
+    // here too rather than only at open.
+    if (this.playback && this.playback.state !== "running") void this.resumePlayback();
 
     // Rejoin a sample split across two network frames before doing anything
     // else. Without this the odd-length frames throw and are dropped, and the
