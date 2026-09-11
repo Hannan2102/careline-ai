@@ -170,3 +170,69 @@ class TestClinicQuestions:
         about the agent itself with a transfer to a human.
         """
         assert extractor.extract(utterance, ExtractionContext()).intent is not Intent.CLINIC_FAQ
+
+
+class TestTheAgentUnderstandsItsOwnOffer:
+    """Whatever the fallback advertises, the matcher must accept.
+
+    Found in a live call. The agent's fallback says it can help with "what your
+    prescription says"; the caller asked exactly that, four times, in four
+    phrasings, and got the same fallback back each time. The trigger list had
+    "my prescriptions" and not "my prescription", so the singular missed.
+
+    Advertising a capability in words the matcher rejects is worse than not
+    advertising it: the caller has been told what to say, and saying it does
+    not work.
+    """
+
+    @pytest.mark.parametrize(
+        "utterance",
+        [
+            "Can you tell me what my prescription says?",
+            "Tell me what my prescription says.",
+            "What does my prescription say about the asthma medicines?",
+            "What medication am I on?",
+            "How do I use my inhaler?",
+        ],
+    )
+    def test_asking_what_the_prescription_says_reaches_the_lookup(
+        self, extractor: RuleBasedExtractor, utterance: str
+    ) -> None:
+        assert extractor.extract(utterance, ExtractionContext()).intent is Intent.MEDICATION_LOOKUP
+
+    @pytest.mark.parametrize(
+        "utterance",
+        [
+            "I need a refill on my prescription",
+            "Can I get a repeat prescription?",
+            "I'm running out of my medication",
+            "I need more of my inhaler",
+        ],
+    )
+    def test_a_refill_is_still_a_refill(
+        self, extractor: RuleBasedExtractor, utterance: str
+    ) -> None:
+        """Both intents now mention prescriptions, and only one reorders records.
+
+        Refill is matched first on purpose. Asking what a prescription says is
+        a read; asking for more of it writes a request a clinician must review.
+        """
+        assert extractor.extract(utterance, ExtractionContext()).intent is Intent.REFILL_REQUEST
+
+    def test_the_fallback_wording_is_covered_by_the_matcher(self) -> None:
+        """A guard against the two drifting apart again.
+
+        If the fallback is reworded, the phrase it offers has to remain
+        something this extractor recognises.
+        """
+        from app.agents.orchestrator import FALLBACK_MESSAGE
+
+        assert "prescription" in FALLBACK_MESSAGE
+        spoken_back = "Can you tell me what my prescription says?"
+        assert extractor_intent(spoken_back) is Intent.MEDICATION_LOOKUP, (
+            "the fallback offers wording the matcher does not accept"
+        )
+
+
+def extractor_intent(utterance: str) -> Intent:
+    return RuleBasedExtractor().extract(utterance, ExtractionContext()).intent

@@ -89,8 +89,21 @@ INTENT_PHRASES: tuple[tuple[Intent, tuple[str, ...]], ...] = (
             "when do i take",
             "supposed to take",
             "what am i taking",
+            # Singular as well as plural. The agent's own fallback offers
+            # "what your prescription says", so a caller who takes it at its
+            # word and asks exactly that was met with the same fallback again
+            # -- observed live, four times in a row. Advertising a capability
+            # in words the matcher does not accept is worse than not
+            # advertising it.
+            "my medication",
             "my medications",
+            "my prescription",
             "my prescriptions",
+            "prescription say",
+            "what medication",
+            "what medicine",
+            # A patient says "how do I use my inhaler", never "how do I take".
+            "how do i use",
             "what did my doctor prescribe",
             "prescribed for",
         ),
@@ -256,6 +269,9 @@ CLINIC_QUESTION_MARKERS = (
 #: A small demo vocabulary. Real deployments need the patient's own list or a
 #: drug dictionary; the LLM extractor in Phase 12 removes this limitation.
 KNOWN_MEDICATIONS = (
+    # Not a drug, but what the patient calls one: the record reads "Albuterol
+    # inhaler" and the caller says "my inhaler".
+    "inhaler",
     "metformin",
     "lisinopril",
     "albuterol",
