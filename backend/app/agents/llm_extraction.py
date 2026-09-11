@@ -256,6 +256,12 @@ class LLMExtractor:
             ordinal=baseline.ordinal,
             confirm=baseline.confirm if baseline.confirm is not None else seen.confirm,
             none_suitable=baseline.none_suitable or bool(seen.none_suitable),
-            list_all=baseline.list_all or bool(seen.list_all),
+            # Only when nothing was named. "Tell me how much metformin I should
+            # take" is a question about one drug, and a model that also sets
+            # list_all turns it into a recital of the whole record -- which is
+            # what a live caller got, twice, having asked about metformin by
+            # name both times.
+            list_all=baseline.list_all
+            or (bool(seen.list_all) and not (baseline.medication_name or seen.medication_name)),
             entities=baseline.entities,
         )

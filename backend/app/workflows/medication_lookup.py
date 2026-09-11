@@ -55,6 +55,8 @@ class MedicationLookupInput(BaseModel):
     medication_name: str | None = None
     #: True when they asked what they are taking rather than about one drug.
     list_all: bool = False
+    #: "The first one", said against a list we just read out.
+    ordinal: int | None = None
 
 
 def render_dosage_answer(medication: MedicationSummary, service: MedicationService) -> str:
@@ -173,7 +175,14 @@ class MedicationLookupWorkflow:
         patient_ref = require_verified_patient(session)
         memory = self._memory(session)
         medication_name = turn.medication_name or memory.get("medication_name")
+        if medication_name is None and turn.ordinal is not None:
+            medication_name = self._nth_offered(memory, turn.ordinal)
         list_all = turn.list_all or bool(memory.get("list_all", False))
+        # Naming one answers the earlier "which did you mean", so the standing
+        # request to list everything is spent.
+        if medication_name:
+            list_all = False
+            memory.set("list_all", False)
 
         if list_all or not medication_name:
             active = await self.medications.list_active(patient_ref)
@@ -191,16 +200,24 @@ class MedicationLookupWorkflow:
                     "wrong, I can pass you to our staff to check.",
                 )
             names = ", ".join(m.display_name for m in active)
-            if list_all:
-                return self._answered(
-                    session,
-                    f"Your record shows {names}. Would you like the instructions for any of those?",
-                )
+            # Remembered in the order they were spoken, so "the first one"
+            # means the first one the caller actually heard.
+            memory.set("offered", [m.display_name for m in active])
+            question = (
+                f"Your record shows {names}. Would you like the instructions for any of those?"
+                if list_all
+                else f"Which medication did you mean? Your record shows {names}."
+            )
+            # Open, not answered. Both of these end in a question, and a
+            # workflow that asks one and then closes has forgotten it asked:
+            # the caller says "the first one, please" and reaches the fallback
+            # menu, which is what happened on a live call.
             return self._respond(
                 session,
                 LookupState.COLLECTING_MEDICATION,
                 WorkflowStatus.AWAITING_INPUT,
-                f"Which medication did you mean? Your record shows {names}.",
+                question,
+                awaiting=AwaitedInput.MEDICATION_CHOICE,
             )
 
         lookup = await self.medications.look_up(patient_ref, medication_name)
@@ -261,6 +278,19 @@ class MedicationLookupWorkflow:
             WorkflowStatus.AWAITING_INPUT,
             "Which medication would you like me to check?",
         )
+
+    @staticmethod
+    def _nth_offered(memory: MedicationMemory, ordinal: int) -> str | None:
+        """The nth medication of those just read out, if there was an nth.
+
+        Stored in the order they were spoken, so "the first one" means the
+        first one the caller actually heard rather than the first on the
+        record.
+        """
+        offered = memory.get("offered") or []
+        if isinstance(offered, list) and 1 <= ordinal <= len(offered):
+            return str(offered[ordinal - 1])
+        return None
 
     def _answered(self, session: SessionState, message: str) -> WorkflowResponse:
         session.active_workflow = None

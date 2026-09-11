@@ -332,6 +332,7 @@ class Orchestrator:
             second_factor_value=extracted.second_factor_value,
             medication_name=extracted.medication_name,
             list_all=extracted.list_all,
+            ordinal=extracted.ordinal,
         )
 
     @staticmethod

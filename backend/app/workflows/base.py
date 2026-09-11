@@ -41,6 +41,7 @@ class AwaitedInput(StrEnum):
     SECOND_FACTOR = "second_factor"
     REASON = "reason"
     SLOT_CHOICE = "slot_choice"
+    MEDICATION_CHOICE = "medication_choice"
     CONFIRMATION = "confirmation"
 
 

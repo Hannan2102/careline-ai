@@ -182,3 +182,25 @@ class TestWhenTheModelIsAskedAtAll:
         llm = FakeLLM('{"intent": "clinic_faq"}')
         await extractor(llm).aextract("where do I park", ExtractionContext())
         assert llm.calls == 1
+
+
+class TestListAllIsNotAnOverride:
+    """Asking about one drug is not asking about all of them.
+
+    Measured on a live call: the caller asked about metformin by name, the
+    model returned medication_lookup with list_all also set, and the agent
+    recited the whole record instead of answering. Twice.
+    """
+
+    async def test_a_named_drug_survives_the_model_asking_for_everything(self) -> None:
+        llm = FakeLLM('{"intent": "medication_lookup", "list_all": true}')
+        result = await extractor(llm).aextract(
+            "tell me how much metformin I should take", ExtractionContext()
+        )
+        assert result.medication_name is not None
+        assert result.list_all is False
+
+    async def test_list_all_still_works_when_nothing_was_named(self) -> None:
+        llm = FakeLLM('{"intent": "medication_lookup", "list_all": true}')
+        result = await extractor(llm).aextract("what am I on at the moment", ExtractionContext())
+        assert result.list_all is True

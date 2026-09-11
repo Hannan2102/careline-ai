@@ -437,3 +437,86 @@ class TestVerificationGate:
 
         with pytest.raises(NotVerifiedError):
             await MedicationService(ehr).list_active(require_verified_patient(session))
+
+
+class TestAnsweringTheQuestionItAsked:
+    """A workflow that asks a question has to still be there for the answer.
+
+    From a live call. The agent listed two prescriptions and asked "would you
+    like the instructions for any of those?", and the caller's "for the first
+    one, please" reached the generic capability menu -- because listing them
+    had closed the workflow. The agent asked a question and immediately forgot
+    it had asked.
+    """
+
+    async def test_an_ordinal_resolves_against_what_was_read_out(
+        self, lookup: MedicationLookupWorkflow, session: SessionState
+    ) -> None:
+        await lookup.start(session)
+        listed = await lookup.advance(
+            session,
+            MedicationLookupInput(
+                full_name="John Smith", date_of_birth=JOHN_SMITH_DOB, list_all=True
+            ),
+            now=NOW,
+        )
+        assert listed.status is WorkflowStatus.AWAITING_INPUT, "closed while asking a question"
+        assert session.active_workflow == lookup.name
+
+        chosen = await lookup.advance(session, MedicationLookupInput(ordinal=1), now=NOW)
+        assert METFORMIN_INSTRUCTION in chosen.message
+
+    async def test_the_second_one_is_the_second_one_they_heard(
+        self, lookup: MedicationLookupWorkflow, session: SessionState
+    ) -> None:
+        await lookup.start(session)
+        listed = await lookup.advance(
+            session,
+            MedicationLookupInput(
+                full_name="John Smith", date_of_birth=JOHN_SMITH_DOB, list_all=True
+            ),
+            now=NOW,
+        )
+        assert "Metformin 500 mg, Lisinopril 10 mg" in listed.message
+
+        chosen = await lookup.advance(session, MedicationLookupInput(ordinal=2), now=NOW)
+        assert "Lisinopril 10 mg" in chosen.message
+
+    async def test_an_ordinal_past_the_end_asks_again(
+        self, lookup: MedicationLookupWorkflow, session: SessionState
+    ) -> None:
+        """Guessing at "the fourth one" of two would answer about the wrong drug."""
+        await lookup.start(session)
+        await lookup.advance(
+            session,
+            MedicationLookupInput(
+                full_name="John Smith", date_of_birth=JOHN_SMITH_DOB, list_all=True
+            ),
+            now=NOW,
+        )
+        result = await lookup.advance(session, MedicationLookupInput(ordinal=9), now=NOW)
+        assert result.status is WorkflowStatus.AWAITING_INPUT
+        assert METFORMIN_INSTRUCTION not in result.message
+
+    async def test_naming_a_drug_spends_the_request_to_list_them_all(
+        self, lookup: MedicationLookupWorkflow, session: SessionState
+    ) -> None:
+        """ "Tell me how much metformin I should take" is about one drug.
+
+        A classifier that sets list_all alongside a named medication turned the
+        question into a recital of the whole record -- twice on one live call,
+        each time having been asked about metformin by name.
+        """
+        await lookup.start(session)
+        result = await lookup.advance(
+            session,
+            MedicationLookupInput(
+                full_name="John Smith",
+                date_of_birth=JOHN_SMITH_DOB,
+                medication_name="metformin",
+                list_all=True,
+            ),
+            now=NOW,
+        )
+        assert METFORMIN_INSTRUCTION in result.message
+        assert "Would you like the instructions" not in result.message
