@@ -56,12 +56,12 @@ class TestTheModelAddsUnderstanding:
     async def test_an_intent_the_rules_missed_is_rescued(self) -> None:
         llm = FakeLLM('{"intent": "medication_lookup", "confidence": 0.9}')
         rules_only = RuleBasedExtractor().extract(
-            "remind me about the asthma one", ExtractionContext()
+            "what did they put me on after my last visit", ExtractionContext()
         )
         assert rules_only.intent is Intent.UNKNOWN
 
         result = await extractor(llm).aextract(
-            "remind me about the asthma one", ExtractionContext()
+            "what did they put me on after my last visit", ExtractionContext()
         )
         assert result.intent is Intent.MEDICATION_LOOKUP
 

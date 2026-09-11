@@ -96,6 +96,13 @@ PERSONAL_COVERAGE_PHRASES: tuple[str, ...] = (
     "insurance on file",
     "my member number",
     "my policy",
+    "my card",
+    "my new card",
+    "insurance card",
+    "plan have you got",
+    "plan do you have for me",
+    "got down for me",
+    "on file for me",
 )
 
 #: Phrasings that make a question about the clinic however possessive it looks.
@@ -108,6 +115,9 @@ CLINIC_DIRECTED_MARKERS: tuple[str, ...] = (
     "do you work with",
     "are you in network",
     "in network with",
+    "do you deal with",
+    "insurers do you",
+    "insurance do you",
 )
 
 
@@ -117,10 +127,25 @@ INTENT_PHRASES: tuple[tuple[Intent, tuple[str, ...]], ...] = (
         (
             "refill",
             "repeat prescription",
-            "run out of",
-            "running out of",
+            "my repeat",
+            # Not "run out of": people say "I've nearly run out" and stop
+            # there, and requiring the preposition meant the commonest
+            # phrasing of the commonest request matched nothing at all.
+            "run out",
+            "ran out",
+            "running out",
+            "running low",
+            "getting low",
             "more of my",
             "top up my prescription",
+            "send more",
+            "the pharmacy",
+            "another month",
+            "another box",
+            "another pack",
+            "renew",
+            "my script",
+            "new script",
         ),
     ),
     (Intent.COVERAGE_LOOKUP, PERSONAL_COVERAGE_PHRASES),
@@ -152,6 +177,34 @@ INTENT_PHRASES: tuple[tuple[Intent, tuple[str, ...]], ...] = (
             "how do i use",
             "what did my doctor prescribe",
             "prescribed for",
+            "how often",
+            "the dose",
+            "the dosage",
+            "meant to take",
+            "meant to be taking",
+            "supposed to be taking",
+            "with food",
+            "the label",
+            "label say",
+            # What is on the box, described the way it is held: callers name
+            # the tablet, not the molecule. None of these name a drug -- they
+            # only establish that the question is about one -- so the workflow
+            # reads the record back and asks which was meant. Deciding that
+            # "the sugar one" is the metformin would be a clinical inference,
+            # and a wrong one reads out the wrong dosage.
+            "tablet",
+            "pill",
+            "capsule",
+            "puffer",
+            "the sugar",
+            "water tablet",
+            "blood pressure one",
+            "asthma one",
+            "chest one",
+            "cholesterol one",
+            "thyroid one",
+            "white ones",
+            "blue one",
         ),
     ),
     (
@@ -165,11 +218,30 @@ INTENT_PHRASES: tuple[tuple[Intent, tuple[str, ...]], ...] = (
             "another time",
             "push it back",
             "bring it forward",
+            "change the day",
+            "change the date",
+            "change the time",
+            "different day",
+            "swap my appointment",
+            "shift my appointment",
         ),
     ),
     (
         Intent.CANCEL_APPOINTMENT,
-        ("cancel", "call off", "can't make it", "cannot make it", "won't be able to make"),
+        (
+            "cancel",
+            "call off",
+            "can't make it",
+            "cannot make it",
+            "won't be able to make",
+            "won't be there",
+            "can't be there",
+            "not going to make",
+            "take me off",
+            "something's come up",
+            "something has come up",
+            "something came up",
+        ),
     ),
     (
         Intent.LOOKUP_APPOINTMENT,
@@ -182,6 +254,13 @@ INTENT_PHRASES: tuple[tuple[Intent, tuple[str, ...]], ...] = (
             "check my appointment",
             "confirm my appointment",
             "my next appointment",
+            "did i book",
+            "am i booked",
+            "am i down for",
+            "am i on the list",
+            "what time is my",
+            "when am i due",
+            "due in",
         ),
     ),
     (
@@ -196,9 +275,113 @@ INTENT_PHRASES: tuple[tuple[Intent, tuple[str, ...]], ...] = (
             "get an appointment",
             "need an appointment",
             "like an appointment",
+            "see someone",
+            "to be seen",
+            "be seen before",
+            "can i get in",
+            "get me in",
+            "fit me in",
+            "squeeze me in",
+            "set me up",
+            "put me down for",
+            "next opening",
+            "any openings",
+            "next available",
+            "earliest you",
+            "check-up",
+            "checkup",
+            "check up",
+            "follow-up",
+            "follow up",
+            # A medication review is an appointment, however much it sounds
+            # like a question about the prescription itself.
+            "prescription check",
+            "medication review",
+            # Asking after a cancelled slot is asking for one, not giving one
+            # up. Same word, opposite request.
+            "any cancellation",
+            "do you have anything",
+            "any appointments",
+            "appointments free",
+            "any availability",
+            "anything free",
         ),
     ),
 )
+
+#: Words that belong to exactly one request, whatever else is in the sentence.
+#:
+#: The scoring below prefers the longest match, which is a good proxy for
+#: specificity and a bad one here: "I need a refill on my prescription"
+#: contains "my prescription" (fifteen characters, a dosage question) and
+#: "refill" (six, and decisive). Nobody says "refill" about anything but a
+#: refill, so length is simply the wrong measure for these few, and they are
+#: settled before it is applied.
+DECISIVE_PHRASES: tuple[tuple[str, Intent], ...] = (
+    ("refill", Intent.REFILL_REQUEST),
+    ("repeat prescription", Intent.REFILL_REQUEST),
+    ("running low", Intent.REFILL_REQUEST),
+    ("getting low", Intent.REFILL_REQUEST),
+    ("running out", Intent.REFILL_REQUEST),
+    ("run out", Intent.REFILL_REQUEST),
+    ("ran out", Intent.REFILL_REQUEST),
+    ("reschedule", Intent.RESCHEDULE_APPOINTMENT),
+)
+
+#: A cancellation that names a replacement is a reschedule.
+#:
+#: "Scrap Thursday and give me Friday" is one request, and reading it as a
+#: cancellation loses the half the caller cared about: they hang up believing
+#: they have Friday, and they have nothing. No single phrase decides it --
+#: what makes it a reschedule is that a *drop* and an *offer* both appear, in
+#: either order, which is a shape rather than a word.
+_RESCHEDULE_PAIR = re.compile(
+    r"\b(?:cancel|scrap|drop|call off|take me off|move|change)\b.{0,60}"
+    r"\b(?:instead|and (?:give|book|make|put|set|do)|rebook)\b"
+    r"|\b(?:instead of|rather than)\b.{0,60}\b(?:cancel|scrap|drop)\b"
+)
+
+#: "I've got two left." "Only a few days left."
+#:
+#: A count of what remains is a refill request that never uses the word, and
+#: it is how somebody who has never said "refill" in their life asks for one.
+_RUNNING_LOW = re.compile(
+    r"\b(?:only |just |about )?(?:a few|a couple of|one|two|three|four|five|six|seven|\d+)\s+"
+    r"(?:tablets?|pills?|doses?|days?|weeks?)?\s*(?:left|remaining|to go)\b"
+)
+
+#: Clinic-fact aliases that ordinary appointment talk swallows whole.
+#:
+#: "Saturday" is the entire question in "are you open Saturday?" and merely
+#: incidental in "cancel my Saturday appointment". "Open" is the topic in
+#: "what time do you open" and part of the request in "any openings?".
+#: Specificity alone cannot separate those, because the alias really is the
+#: longer match in the sentence where it is beside the point -- so these are
+#: consulted only when nothing else the caller said was about their own
+#: booking or prescription. The strong aliases need no such protection:
+#: "cancellation policy" and "how much will this cost" are specific enough to
+#: win on length honestly.
+WEAK_FAQ_ALIASES = frozenset(
+    {
+        "open",
+        "saturday",
+        "sunday",
+        "weekend",
+        "number",
+        "early",
+        "cancel",
+        "cancellation",
+        "covered",
+        "insured",
+        "insurance",
+        "coverage",
+        "price",
+        "bring",
+        "doctors",
+        "providers",
+    }
+)
+
 
 YES_WORDS = frozenset(
     {
@@ -335,6 +518,21 @@ KNOWN_MEDICATIONS = (
     "levothyroxine",
 )
 
+#: Words for a thing, not guesses at which thing.
+#:
+#: A puffer is an inhaler -- same object, different word -- so translating it
+#: costs nothing and saves the caller being told we have no prescription for a
+#: "puffer". Nothing here crosses from a description to a drug: "the sugar
+#: one" is deliberately absent, because deciding it means the metformin is a
+#: clinical inference, and the wrong inference reads out the wrong dosage. The
+#: descriptive phrases are matched as *intent* only (see INTENT_PHRASES
+#: above), which leaves the workflow to read the record back and ask which was
+#: meant -- the answer a receptionist would give.
+MEDICATION_SYNONYMS: tuple[tuple[str, str], ...] = (
+    ("puffer", "inhaler"),
+    ("pump", "inhaler"),
+)
+
 #: The lead-in is case-insensitive; the name itself is not. Requiring capitals
 #: on the name is what stops "i'm going to need an appointment" being read as a
 #: person called "Going To".
@@ -466,37 +664,104 @@ class RuleBasedExtractor:
                     "my prescriptions",
                     "what medications",
                     "list my",
+                    "meant to be taking",
+                    "supposed to be taking",
+                    "what am i on",
+                    "what do i take",
+                    "everything i",
+                    "all of my",
                 )
             ),
         )
 
     # ------------------------------------------------------------- intent
     def _intent(self, lowered: str, context: ExtractionContext) -> tuple[Intent, float]:
-        # Mid-workflow, the outstanding question determines what this turn is
-        # about. Re-classifying every turn would let "yes" restart a booking.
+        """Route the utterance by the most specific thing in it.
+
+        Mid-workflow the outstanding question decides instead: re-classifying
+        every turn would let "yes" restart a booking.
+
+        Everywhere else the rule is **longest match wins**, which is the rule
+        the ordinal matcher above had to learn the same way. A flat table read
+        in order answers "which phrase did somebody happen to list first", and
+        that was wrong in both directions at once: "Did I book something?"
+        opened a booking because it contains "book", and "Got any
+        cancellations?" cancelled an appointment because it contains "cancel".
+        Length is a fair proxy for specificity, and -- unlike table order -- it
+        does not quietly change what a sentence means when a phrase is
+        appended to the end of an unrelated list.
+
+        Ties fall to whichever table was consulted first, so the order below is
+        still a priority: the caller's own cover before the clinic's brochure,
+        before the appointment verbs, before a bare "do you...?".
+        """
         if context.awaiting is not None:
             return Intent.UNKNOWN, 1.0
 
-        if not any(word in lowered for word in ("appointment", "book", "refill", "cancel")):
-            # Before the FAQ, because the FAQ's "insurance" alias would
-            # otherwise swallow "what insurance do I have" and answer a
-            # question about the caller's own record with a list of the plans
-            # the clinic accepts.
-            if self._is_personal_coverage(lowered):
-                return Intent.COVERAGE_LOOKUP, 0.9
-            if self._faq_topic(lowered) is not None:
-                return Intent.CLINIC_FAQ, 0.9
+        # Two requests that no single phrase settles, because what makes each
+        # one what it is, is that two separate parts both appear.
+        if _RESCHEDULE_PAIR.search(lowered):
+            return Intent.RESCHEDULE_APPOINTMENT, 0.9
+        if _RUNNING_LOW.search(lowered):
+            return Intent.REFILL_REQUEST, 0.9
+        for phrase, decided in DECISIVE_PHRASES:
+            if phrase in lowered:
+                return decided, 0.9
+
+        best: tuple[Intent, float] | None = None
+        longest = 0
+        for intent, phrases, confidence in self._tables(lowered):
+            for phrase in phrases:
+                if len(phrase) > longest and phrase in lowered:
+                    longest, best = len(phrase), (intent, confidence)
+        return best or (Intent.UNKNOWN, 0.2)
+
+    def _tables(self, lowered: str) -> tuple[tuple[Intent, tuple[str, ...], float], ...]:
+        """Every phrase that could claim this utterance, in priority order."""
+        return (
+            # Before the FAQ, whose "insurance" alias would otherwise swallow
+            # "what insurance do I have" and answer a question about the
+            # caller's own record with a list of the plans the clinic accepts.
+            (
+                Intent.COVERAGE_LOOKUP,
+                () if self._is_clinic_directed(lowered) else PERSONAL_COVERAGE_PHRASES,
+                0.9,
+            ),
+            (Intent.CLINIC_FAQ, self._faq_phrases(lowered), 0.9),
+            # Coverage is skipped here: it is the table above, where the
+            # clinic-directed veto applies to it. Scanned again as part of
+            # INTENT_PHRASES it would match "do you take my insurance" and
+            # send a caller asking a public question off to prove who they are.
+            *(
+                (intent, phrases, 0.9)
+                for intent, phrases in INTENT_PHRASES
+                if intent is not Intent.COVERAGE_LOOKUP
+            ),
             # A clinic question we have no answer for. Routed to the FAQ
             # workflow anyway, with no topic, so it escalates to the front desk
             # rather than being met with the generic capability list.
-            if any(marker in lowered for marker in CLINIC_QUESTION_MARKERS):
-                return Intent.CLINIC_FAQ, 0.6
+            (Intent.CLINIC_FAQ, CLINIC_QUESTION_MARKERS, 0.6),
+        )
 
-        for intent, phrases in INTENT_PHRASES:
-            for phrase in phrases:
-                if phrase in lowered:
-                    return intent, 0.9
-        return Intent.UNKNOWN, 0.2
+    def _faq_phrases(self, lowered: str) -> tuple[str, ...]:
+        """The clinic-fact alias that matched, as the caller actually said it.
+
+        The matched text rather than the topic it maps to, so that it competes
+        on the same footing as everything else: "how much will this cost" is a
+        longer and more specific claim on the utterance than "how much", which
+        is exactly why it should win.
+        """
+        alias = self._faq_topic(lowered)
+        if alias is None:
+            return ()
+        if alias in WEAK_FAQ_ALIASES and self._mentions_their_own(lowered):
+            return ()
+        return (alias.replace("_", " "),)
+
+    @staticmethod
+    def _mentions_their_own(lowered: str) -> bool:
+        """Whether anything in the utterance is about this caller's own records."""
+        return any(phrase in lowered for _intent, phrases in INTENT_PHRASES for phrase in phrases)
 
     async def aextract(self, utterance: str, context: ExtractionContext) -> ExtractedTurn:
         """The rules again. Nothing here waits on anything."""
@@ -570,14 +835,20 @@ class RuleBasedExtractor:
             head = name.split()[0]
             if head in lowered:
                 return head
+        for spoken, recorded in MEDICATION_SYNONYMS:
+            if spoken in lowered:
+                return recorded
         return None
 
     @staticmethod
-    def _is_personal_coverage(lowered: str) -> bool:
-        """Their cover, not ours."""
-        if any(marker in lowered for marker in CLINIC_DIRECTED_MARKERS):
-            return False
-        return any(phrase in lowered for phrase in PERSONAL_COVERAGE_PHRASES)
+    def _is_clinic_directed(lowered: str) -> bool:
+        """Whether a question that mentions insurance is about *ours*.
+
+        "Do you take my insurance?" names the caller's plan and is really
+        asking which plans are accepted -- answerable without making anyone
+        prove who they are.
+        """
+        return any(marker in lowered for marker in CLINIC_DIRECTED_MARKERS)
 
     @staticmethod
     def _faq_topic(lowered: str) -> str | None:

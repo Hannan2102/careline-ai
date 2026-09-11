@@ -69,12 +69,22 @@ TREATMENT_PATTERNS: tuple[str, ...] = (
 
 HUMAN_PATTERNS: tuple[str, ...] = (
     r"(speak|talk|chat) (to|with) (a |an |the )?(human|person|real person|someone|"
-    r"somebody|nurse|doctor|receptionist|staff|member of staff|agent|operator)",
+    r"somebody|nurse|doctor|reception|receptionist|staff|member of staff|agent|operator|"
+    r"the desk|front desk)",
     r"(transfer|put) me (through|to)",
     r"(get|give) me (a|an) (human|person|nurse|real person)",
     r"i (want|need|would like) (to speak to )?(a |an )?(human|person|real person)",
     r"(is|can i get) (there )?a (human|person|real person)",
+    # "Is there someone there?" -- asked by people who are not sure whether
+    # anybody is listening, and answered by getting them somebody who is.
+    r"is (there )?(anyone|someone|somebody|a human|a person)( there| available| i can)?",
     r"stop talking to (a|the) (bot|robot|machine|computer)",
+    # Said as a preference rather than a request: "I'd rather not do this with
+    # a robot" is a request for a person, and arguing with it would be the
+    # single worst thing this system could do.
+    r"(rather not|don'?t want to|do not want to|no point) .{0,30}"
+    r"\b(bot|robot|machine|computer|automated|ai)\b",
+    r"\b(bot|robot|machine|computer)\b.{0,20}(is|are) (useless|no help|not helping)",
 )
 
 _DIAGNOSIS = re.compile("|".join(DIAGNOSIS_PATTERNS), re.IGNORECASE)

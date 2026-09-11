@@ -132,7 +132,10 @@ class TestClinicQuestions:
         [
             "Do you have a physiotherapist?",
             "Do you do x-rays?",
-            "Do you take Aetna?",
+            # Carriers are answerable now, even ones we do not take: the
+            # answer names the plans the clinic accepts, which is what the
+            # question was really after.
+            "Do you do home visits?",
             "Do you offer blood tests?",
             "Can I get a referral?",
         ],

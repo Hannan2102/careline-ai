@@ -164,6 +164,9 @@ CLINIC_FAQ: dict[str, str] = {
 FAQ_TOPIC_ALIASES: dict[str, str] = {
     "hours": "hours",
     "open": "hours",
+    # Nobody asks what time you "close" when they can ask what time you shut.
+    "shut": "hours",
+    "closing": "hours",
     "opening_hours": "hours",
     "weekend": "hours",
     "saturday": "hours",
@@ -186,6 +189,14 @@ FAQ_TOPIC_ALIASES: dict[str, str] = {
     "cancel": "cancellation_policy",
     "cancellation": "cancellation_policy",
     "cancellation_policy": "cancellation_policy",
+    # A question about the rule, not a request to apply it. Both contain the
+    # word "cancel", and only the longer phrasings distinguish them -- so the
+    # longer phrasings are written down. Without these, "how late can I
+    # cancel?" cancelled an appointment.
+    "late_can_i_cancel": "cancellation_policy",
+    "notice_do_you_need": "cancellation_policy",
+    "notice_do_i_have_to_give": "cancellation_policy",
+    "if_i_cancel": "cancellation_policy",
     "bring": "what_to_bring",
     "what_to_bring": "what_to_bring",
     "new_patient": "new_patient_process",
@@ -206,11 +217,25 @@ FAQ_TOPIC_ALIASES: dict[str, str] = {
     "how_much_do_you_charge": "billing",
     "cost_me": "billing",
     "the_cost": "billing",
+    "how_much_is_a_visit": "billing",
+    "how_much_for_a_visit": "billing",
+    "how_much_does_a_visit": "billing",
+    # "Charge" and "pay" are too short to match on their own -- "discharge",
+    # "paying attention" -- so they are written with the words that make them
+    # a question about money.
+    "be_charged": "billing",
+    "get_charged": "billing",
+    "am_i_paying": "billing",
+    "do_i_pay": "billing",
+    "have_to_pay": "billing",
+    "what_do_you_charge": "billing",
     "price": "billing",
     "billing": "billing",
     "my_bill": "billing",
     "insured": "insurance",
     "covered": "insurance",
+    "insurer": "insurance",
+    "in_network": "insurance",
     # The carrier as people say it, not as the plan is filed: nobody asks "do
     # you take Blue Shield PPO (demo)". These track ACCEPTED_INSURANCE above --
     # add the spoken form here when a plan is added there. A carrier we do not
@@ -221,6 +246,18 @@ FAQ_TOPIC_ALIASES: dict[str, str] = {
     "medicaid": "insurance",
     "medicare": "insurance",
     "employee_plan": "insurance",
+    # Carriers we do *not* take, listed so that "do you take Aetna?" is
+    # answered with the plans we do take rather than escalated to the front
+    # desk. The answer names what is accepted, so appearing here claims
+    # nothing: it only stops a reasonable question falling through.
+    "aetna": "insurance",
+    "cigna": "insurance",
+    "humana": "insurance",
+    "kaiser": "insurance",
+    "anthem": "insurance",
+    "united_healthcare": "insurance",
+    "blue_cross": "insurance",
+    "tricare": "insurance",
     "providers": "providers",
     "doctors": "providers",
 }
