@@ -627,6 +627,9 @@ _MONTH_WORDS = (
 #: nothing, and the caller was asked for their date of birth again.
 _MONTH_RE = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
 
+#: The same month vocabulary, anchored, for testing one word at a time.
+_MONTH_FULLMATCH = re.compile(_MONTH_RE, re.IGNORECASE)
+
 _DOB_PATTERNS = (
     r"\b(\d{4}-\d{2}-\d{2})\b",
     rf"\b(\d{{1,2}}\s+{_MONTH_RE}\s+\d{{4}})\b",
@@ -927,10 +930,17 @@ def _is_spoken_date(candidate: str) -> bool:
 
     Every word has to be date vocabulary, not just one. April and June are
     names as well as months, and "April Smith" is a person.
+
+    The month is matched however much of it was said, for the same reason the
+    date patterns are: people abbreviate out loud, and Deepgram writes down
+    what it heard. "Fifteenth Feb nineteen eighty five" was being claimed as a
+    caller named *Fifteenth Feb* -- overwriting the real name given the turn
+    before -- because the full-month list has no "feb" in it. The date parsed
+    correctly the whole time; the name it arrived with is what failed.
     """
     words = candidate.lower().split()
     return bool(words) and all(
-        word in _MONTH_WORDS or word in _UNITS or word in _TENS or word in _DATE_GLUE
+        _MONTH_FULLMATCH.fullmatch(word) or word in _UNITS or word in _TENS or word in _DATE_GLUE
         for word in words
     )
 

@@ -111,6 +111,15 @@ class TestADateIsNotAName:
             ("Thirtieth April nineteen fifty eight.", date(1958, 4, 30)),
             ("Fifteenth February nineteen eighty five", date(1985, 2, 15)),
             ("Twenty First December Two Thousand Two", date(2002, 12, 21)),
+            # Abbreviated out loud, which is how people say it and how the
+            # recogniser writes it down. Found the same way as the rest of
+            # this class: a live call where the date parsed perfectly and the
+            # caller was told the details did not match, because "Fifteenth
+            # Feb" had been taken for their name and had overwritten "John
+            # Smith" from the turn before.
+            ("Fifteenth Feb nineteen eighty five", date(1985, 2, 15)),
+            ("Third Nov nineteen seventy two", date(1972, 11, 3)),
+            ("Sept fifteenth nineteen eighty five", date(1985, 9, 15)),
         ],
     )
     def test_a_date_alone_yields_a_date_and_no_name(
