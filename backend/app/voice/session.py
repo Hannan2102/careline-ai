@@ -24,6 +24,7 @@ from app.ai.budget_guard import BudgetGuard
 from app.ai.providers.base import STTProvider, TTSProvider, VoiceSpec
 from app.observability.logging import get_logger
 from app.voice.models import CloseReason, VoiceState
+from app.voice.speech import for_speech
 from app.voice.turn_manager import TurnManager, TurnTimings
 
 logger = get_logger(__name__)
@@ -181,7 +182,9 @@ class VoiceSession:
         loop = asyncio.get_running_loop()
         started = loop.time()
         first_audio_ms: float | None = None
-        async for chunk in self.tts.synthesize_stream(text, self.voice):
+        # Rewritten here and nowhere else: the transcript and the dashboard
+        # keep the written form, which is correct on a screen.
+        async for chunk in self.tts.synthesize_stream(for_speech(text), self.voice):
             if first_audio_ms is None:
                 # Time to the *first* byte, not the last: what the caller
                 # experiences as the gap before the agent starts talking.
