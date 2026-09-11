@@ -37,6 +37,12 @@ RATES: dict[tuple[str, str], Decimal] = {
     ("openai", REQUESTS): Decimal("0"),
     # Deepgram streaming, per second of audio
     ("deepgram", STT_SECONDS): Decimal("0.00010000"),
+    # Deepgram Aura-2, per character, from published per-1,000-character
+    # pricing. Approximate and worth confirming against an invoice (COSTS.md):
+    # an absent rate is not neutral here, because `price` returns zero for a
+    # pair it does not know, and a TTS provider that appears to cost nothing
+    # cannot be stopped by the budget guard.
+    ("deepgram", TTS_CHARACTERS): Decimal("0.00003000"),
     # ElevenLabs Flash, per character. Derived from the Starter plan -- $6/mo
     # for 30,000 credits, at Flash's 0.5 credits per character -- because
     # ElevenLabs sells a subscription, not usage. A prepaid bundle does not

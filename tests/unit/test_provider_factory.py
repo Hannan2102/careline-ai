@@ -20,11 +20,12 @@ from app.ai.providers.base import (
 )
 from app.ai.providers.factory import (
     GuardedLLMProvider,
+    GuardedTTSProvider,
     build_llm_provider,
     build_stt_provider,
     build_tts_provider,
 )
-from app.ai.providers.llm.mock import MockLLMProvider
+from app.ai.providers.llm.mock import MockLLMProvider, MockTTSProvider
 from app.ai.usage import OUTPUT_TOKENS, UsageLedger
 from app.config.settings import Settings
 
@@ -247,3 +248,81 @@ class TestDegradingOnProviderFailure:
         )
         with pytest.raises(ProviderUnavailableError):
             await guarded.generate(ASK)
+
+
+class TestDegradationIsAnnounced:
+    """Falling back to silence must not be silent.
+
+    The fallback emits silence-shaped bytes. Offline that is correct; on a live
+    call it is the worst available behaviour, because the agent answers
+    perfectly and the caller hears nothing -- indistinguishable from a crashed
+    server, a dead microphone, or a broken socket. It cost three debugging
+    sessions to recognise as a vendor rate limit, and a real caller would just
+    hang up.
+    """
+
+    @staticmethod
+    def _guarded(paid: object) -> GuardedTTSProvider:
+        settings = Settings(_env_file=None, app_env="test")
+        ledger = UsageLedger()
+        return GuardedTTSProvider(
+            paid,  # type: ignore[arg-type]
+            MockTTSProvider(),
+            BudgetGuard(settings, ledger),
+            "sess-1",
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_vendor_failure_is_announced_and_still_answers(self) -> None:
+        class Broken:
+            name = "groq"
+
+            async def synthesize_stream(self, text: str, voice: VoiceSpec):  # type: ignore[no-untyped-def]
+                raise ProviderUnavailableError("Groq TTS returned 429: daily limit reached")
+                yield b""  # pragma: no cover - never reached
+
+        told: list[str] = []
+
+        async def on_degraded(detail: str) -> None:
+            told.append(detail)
+
+        guarded = self._guarded(Broken())
+        guarded.on_degraded = on_degraded
+        audio = b"".join([c async for c in guarded.synthesize_stream("Hi.", VoiceSpec())])
+
+        assert told, "degraded to silence without telling anyone"
+        assert "429" in told[0], f"the notice does not say why: {told[0]!r}"
+        assert audio, "the fallback should still produce frames"
+
+    @pytest.mark.asyncio
+    async def test_no_listener_is_not_an_error(self) -> None:
+        """Text mode and the test suite attach nothing."""
+
+        class Broken:
+            name = "groq"
+
+            async def synthesize_stream(self, text: str, voice: VoiceSpec):  # type: ignore[no-untyped-def]
+                raise ProviderUnavailableError("down")
+                yield b""  # pragma: no cover - never reached
+
+        guarded = self._guarded(Broken())
+        assert guarded.on_degraded is None
+        assert b"".join([c async for c in guarded.synthesize_stream("Hi.", VoiceSpec())])
+
+    @pytest.mark.asyncio
+    async def test_a_failing_listener_does_not_break_the_call(self) -> None:
+        """A socket that has already gone is the normal case here."""
+
+        class Broken:
+            name = "groq"
+
+            async def synthesize_stream(self, text: str, voice: VoiceSpec):  # type: ignore[no-untyped-def]
+                raise ProviderUnavailableError("down")
+                yield b""  # pragma: no cover - never reached
+
+        async def explode(detail: str) -> None:
+            raise RuntimeError("socket closed")
+
+        guarded = self._guarded(Broken())
+        guarded.on_degraded = explode
+        assert b"".join([c async for c in guarded.synthesize_stream("Hi.", VoiceSpec())])

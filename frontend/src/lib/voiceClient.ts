@@ -36,6 +36,14 @@ export interface VoiceLine {
 
 export interface VoiceClientEvents {
   onStatus(status: VoiceStatus, detail?: string): void;
+  /**
+   * Something degraded without ending the call.
+   *
+   * Separate from an error status because the call carries on: speech falling
+   * back to silence is the case this exists for, and a UI that showed it as a
+   * dead call would be wrong in the other direction.
+   */
+  onNotice(detail: string): void;
   onTranscript(text: string, isFinal: boolean): void;
   onInterrupt(): void;
   onClosed(reason: string): void;
@@ -178,6 +186,9 @@ export class VoiceClient {
       case "closed":
         this.events.onClosed(String(message.reason ?? "ended"));
         this.events.onStatus("closed");
+        return;
+      case "notice":
+        this.events.onNotice(String(message.detail ?? ""));
         return;
       case "error":
         this.events.onStatus("error", String(message.detail ?? "unknown error"));

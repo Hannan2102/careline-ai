@@ -18,7 +18,7 @@ system keeps working in text mode (ADR 006).
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 
 from app.ai.budget_guard import BudgetGuard
 from app.ai.providers.base import (
@@ -118,6 +118,25 @@ class GuardedTTSProvider:
         self.guard = guard
         self.session_id = session_id
         self.name = paid.name
+        #: Told when synthesis degrades, so a transport can say so.
+        #:
+        #: The fallback emits silence-shaped bytes, which is the correct
+        #: behaviour for an offline test and the worst possible behaviour on a
+        #: live call: the agent answers perfectly and the caller hears nothing,
+        #: which is indistinguishable from a crashed server, a dead microphone
+        #: or a broken socket. It cost three debugging sessions to recognise,
+        #: and a real caller would simply hang up. Logging it server-side is
+        #: not enough -- nobody on the call can read the logs.
+        self.on_degraded: Callable[[str], Awaitable[None]] | None = None
+
+    async def _degraded(self, reason: str) -> None:
+        if self.on_degraded is None:
+            return
+        try:
+            await self.on_degraded(reason)
+        except Exception as exc:
+            # Never let the notification break the synthesis it is describing.
+            logger.warning("tts_degraded_notice_failed", error=str(exc))
 
     async def synthesize_stream(self, text: str, voice: VoiceSpec) -> AsyncIterator[bytes]:
         decision = self.guard.check(self.paid.name, self.session_id)
@@ -126,6 +145,7 @@ class GuardedTTSProvider:
             logger.warning(
                 "budget_blocked_falling_back", provider=self.paid.name, reason=decision.reason
             )
+            await self._degraded(f"Speech budget reached: {decision.reason}")
         try:
             async for chunk in provider.synthesize_stream(text, voice):
                 yield chunk
@@ -143,6 +163,7 @@ class GuardedTTSProvider:
                 fallback=self.fallback.name,
                 error=str(exc),
             )
+            await self._degraded(f"{provider.name} speech unavailable: {exc}")
             async for chunk in self.fallback.synthesize_stream(text, voice):
                 yield chunk
 
@@ -293,6 +314,26 @@ def build_tts_provider(
         )
         logger.info("tts_provider_built", provider=groq_tts.name, model=resolved.groq_tts_model)
         return GuardedTTSProvider(groq_tts, mock, BudgetGuard(resolved, usage), session_id)
+
+    if resolved.tts_provider == "deepgram":
+        if not resolved.deepgram_api_key:
+            logger.error("deepgram_tts_selected_without_key_falling_back_to_mock")
+            return mock
+        from app.ai.providers.tts.deepgram import DeepgramTTSProvider
+
+        # The same key already buys recognition. Metered rather than
+        # rate-limited, so unlike Groq this one is genuinely guarded by the
+        # budget: see RATES in ai/usage.py.
+        deepgram_tts = DeepgramTTSProvider(
+            api_key=resolved.deepgram_api_key,
+            model=resolved.deepgram_tts_model,
+            ledger=usage,
+            session_id=session_id,
+        )
+        logger.info(
+            "tts_provider_built", provider=deepgram_tts.name, model=resolved.deepgram_tts_model
+        )
+        return GuardedTTSProvider(deepgram_tts, mock, BudgetGuard(resolved, usage), session_id)
 
     if (
         resolved.tts_provider == "elevenlabs"

@@ -38,7 +38,11 @@ from app.agents.factory import Runtime
 from app.agents.state import SessionChannel
 from app.ai.budget_guard import BudgetGuard
 from app.ai.providers.base import STTProvider, Transcript
-from app.ai.providers.factory import build_stt_provider, build_tts_provider
+from app.ai.providers.factory import (
+    GuardedTTSProvider,
+    build_stt_provider,
+    build_tts_provider,
+)
 from app.ai.providers.stt.deepgram import DEFAULT_SAMPLE_RATE as INPUT_SAMPLE_RATE
 from app.ai.providers.tts.groq import SAMPLE_RATE as OUTPUT_SAMPLE_RATE
 from app.ai.usage import get_usage_ledger
@@ -133,6 +137,17 @@ async def voice_socket(websocket: WebSocket) -> None:
             send_lock,
             {"type": "closed", "reason": reason.value, "session_id": session.session_id},
         )
+
+    async def on_degraded(detail: str) -> None:
+        # A distinct event, not `error`: the call is still running, and a UI
+        # that renders this as a dead call would be wrong in the other
+        # direction. What the caller must not have is silence with no reason.
+        logger.warning("voice_speech_degraded", session_id=session.session_id, detail=detail)
+        await _send_json(websocket, send_lock, {"type": "notice", "detail": detail})
+
+    # Only the guarded wrapper can degrade; a bare provider raises instead.
+    if isinstance(tts, GuardedTTSProvider):
+        tts.on_degraded = on_degraded
 
     async def relay(transcript: Transcript) -> None:
         await _send_json(

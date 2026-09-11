@@ -30,7 +30,7 @@ class EHRProviderName(StrEnum):
 
 LLMProviderName = Literal["mock", "openai", "groq", "ollama"]
 STTProviderName = Literal["mock", "deepgram", "whisper"]
-TTSProviderName = Literal["mock", "groq", "elevenlabs", "piper"]
+TTSProviderName = Literal["mock", "groq", "deepgram", "elevenlabs", "piper"]
 
 #: Providers that cost money. Used by the budget guard and by startup validation.
 #:
@@ -99,6 +99,8 @@ class Settings(BaseSettings):
     #: Measured at ~400 ms to first audio -- slower than ElevenLabs Flash and
     #: free, which is the trade this project takes (COSTS.md).
     groq_tts_model: str = "canopylabs/orpheus-v1-english"
+    #: Aura names the voice as the model, so this field is both.
+    deepgram_tts_model: str = "aura-2-thalia-en"
     groq_tts_voice: str = "hannah"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen3:8b"

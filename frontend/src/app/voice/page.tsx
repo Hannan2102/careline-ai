@@ -45,6 +45,10 @@ export default function VoicePage() {
   const [lines, setLines] = useState<Line[]>([]);
   const [barges, setBarges] = useState(0);
   const [aec, setAec] = useState<boolean | null>(null);
+  // Degradations that did not end the call — speech falling back to silence,
+  // most of all. Kept separate from `detail` so a still-running call is not
+  // painted as a failed one.
+  const [notice, setNotice] = useState<string>();
 
   const clientRef = useRef<VoiceClient | null>(null);
   const nextId = useRef(0);
@@ -61,11 +65,13 @@ export default function VoicePage() {
     setLines([]);
     setBarges(0);
     setDetail(undefined);
+    setNotice(undefined);
     const client = new VoiceClient({
       onStatus: (next, why) => {
         setStatus(next);
         setDetail(why);
       },
+      onNotice: setNotice,
       onTranscript: addTranscript,
       onInterrupt: () => setBarges((n) => n + 1),
       onClosed: (reason) => setDetail(`Call ended: ${reason}`),
@@ -125,6 +131,13 @@ export default function VoicePage() {
           }`}
         >
           {detail}
+        </div>
+      )}
+
+      {notice && (
+        <div className="rounded border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn">
+          <span className="font-medium">The agent is answering, but you will hear silence.</span>{" "}
+          {notice}
         </div>
       )}
 

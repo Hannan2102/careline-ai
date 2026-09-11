@@ -74,8 +74,13 @@ async def paced_audio(count: int) -> AsyncIterator[bytes]:
 
 async def main() -> int:
     settings = get_settings()
-    if settings.tts_provider != "groq":
-        print("Set TTS_PROVIDER=groq and TTS_ENABLED=true (and TEXT_ONLY_MODE=false).")
+    if settings.tts_provider == "mock" or not settings.tts_enabled or settings.text_only_mode:
+        # Any real provider will do: the point of this script is the bytes a
+        # vendor actually sends, and the mock sends silence by construction.
+        print(
+            f"TTS_PROVIDER is {settings.tts_provider!r}. Set a real one "
+            "(groq or deepgram) with TTS_ENABLED=true and TEXT_ONLY_MODE=false."
+        )
         return 2
 
     database = await open_database(settings)
