@@ -22,6 +22,7 @@ from app.agents.state import SessionChannel, SessionState
 from app.ai.budget_guard import BudgetGuard
 from app.ai.providers.base import Transcript, VoiceSpec
 from app.ai.usage import TTS_CHARACTERS, UsageLedger
+from app.config.clinic import CLINIC_NAME, GREETING
 from app.config.settings import Settings
 from app.ehr.base import EHRProvider
 from app.voice.models import CloseReason
@@ -102,7 +103,14 @@ def build(
     utterances: list[str],
     ledger: UsageLedger | None = None,
     settings: Settings | None = None,
+    greeting: str | None = None,
 ) -> tuple[VoiceSession, CountingTTS, list[bytes]]:
+    """A call with no greeting unless one is asked for.
+
+    Production opens with one; these tests assert on what the agent *replied*,
+    and an opening line would shift every index by one for no gain. The
+    greeting has its own tests below.
+    """
     resolved = settings or Settings(_env_file=None, app_env="test")
     usage = ledger or UsageLedger()
     session = SessionState(session_id="sess-voice", channel=SessionChannel.VOICE, created_at=T0)
@@ -120,6 +128,7 @@ def build(
         audio_out=sink,
         guard=BudgetGuard(resolved, usage),
         timings=FAST,
+        greeting=greeting,
     )
     return voice_session, tts, out
 
@@ -308,3 +317,45 @@ class TestLatencyInstrumentation:
         await voice.run(chunks(1))
 
         assert tts.spoken, "a broken metrics sink took the call down with it"
+
+
+class TestTheAgentSpeaksFirst:
+    """A call that opens in silence makes the caller guess it connected.
+
+    What matters is not only that something is said, but that saying it does
+    not cost the caller their own first turn: the greeting is the agent
+    talking, and the silence timers must measure from the end of it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_greeting_is_spoken_before_anything_is_heard(
+        self, orchestrator: Orchestrator
+    ) -> None:
+        voice, tts, _out = build(orchestrator, ["Are you open on Saturday?"], greeting=GREETING)
+        await voice.run(chunks(3))
+        assert tts.spoken[0] == GREETING
+
+    @pytest.mark.asyncio
+    async def test_it_names_the_clinic_and_says_it_is_automated(self) -> None:
+        """Both are the reason it exists. A misdial should hear where it landed
+        before it reads out a date of birth, and nobody should discover they
+        were talking to software three questions in."""
+        assert CLINIC_NAME in GREETING
+        assert "automated" in GREETING.lower()
+
+    @pytest.mark.asyncio
+    async def test_the_caller_is_still_answered_after_it(self, orchestrator: Orchestrator) -> None:
+        voice, tts, _out = build(orchestrator, ["Are you open on Saturday?"], greeting=GREETING)
+        await voice.run(chunks(3))
+        assert "closed on Saturday" in tts.spoken[-1]
+
+    @pytest.mark.asyncio
+    async def test_a_greeting_is_not_a_turn(self, orchestrator: Orchestrator) -> None:
+        """Nothing was said to classify, so nothing is classified.
+
+        Counting it would put an empty utterance through the orchestrator and
+        leave the transcript claiming the caller opened the call.
+        """
+        voice, _tts, _out = build(orchestrator, [], greeting=GREETING)
+        await voice.run(chunks(3))
+        assert voice.manager.stats.turns == 0

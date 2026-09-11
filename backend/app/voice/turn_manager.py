@@ -149,6 +149,25 @@ class TurnManager:
         self._last_voice_at = moment
         self._record("call_started")
 
+    async def greet(self, text: str) -> None:
+        """Speak first, before the caller has said anything.
+
+        A turn the caller did not take, so it deliberately does not go through
+        the orchestrator: there is no utterance to classify and no session
+        state to advance. It is only speech, which means barge-in works on it
+        like any other -- a caller who already knows the menu can start talking
+        over the second sentence, and the greeting stops.
+
+        The silence timers re-anchor to the end of it, via the same flag every
+        other utterance uses. Without that the agent would greet the caller and
+        then ask whether they were still there, having spent their whole first
+        window talking.
+        """
+        if self.state is VoiceState.CLOSED or not text.strip():
+            return
+        self._record("greeting")
+        await self._say(text)
+
     async def close(self, reason: CloseReason) -> None:
         """End the call once. Idempotent, because several things can end it."""
         if self.state is VoiceState.CLOSED:

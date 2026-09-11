@@ -508,3 +508,70 @@ class TestVoiceChangesNoBusinessLogic:
         held = {k for k, v in vars(manager).items() if isinstance(v, str | list)}
         assert "patient_ref" not in held
         assert not any("medication" in name for name in held)
+
+
+class TestSpeakingFirst:
+    """The agent opens the call, and that is not a turn.
+
+    A line that opens in silence leaves the caller saying "hello?" into it, and
+    "hello?" carries no intent -- so the first thing they say is spent finding
+    out whether anyone is there.
+    """
+
+    async def test_the_greeting_is_spoken(self, manager: TurnManager, speaker: Speaker) -> None:
+        await manager.greet("Thank you for calling.")
+        assert speaker.said == ["Thank you for calling."]
+        assert manager.state is VoiceState.LISTENING
+
+    async def test_it_is_not_counted_as_a_turn(self, manager: TurnManager) -> None:
+        """Nothing was said to classify, so the orchestrator is never called."""
+        await manager.greet("Thank you for calling.")
+        assert manager.stats.turns == 0
+
+    async def test_the_caller_can_talk_over_it(
+        self, manager: TurnManager, speaker: Speaker
+    ) -> None:
+        """Someone who calls every week should not have to hear it out."""
+        speaker.block = asyncio.Event()
+        greeting = asyncio.create_task(manager.greet("Thank you for calling."))
+        await asyncio.sleep(0)
+        assert manager.state is VoiceState.SPEAKING
+
+        await manager.on_transcript(interim("I need to cancel"), now=T0)
+
+        await greeting
+        assert manager.stats.barge_ins == 1
+        assert "Thank you for calling." not in speaker.completed
+
+    async def test_the_silence_window_starts_when_the_greeting_ends(
+        self, manager: TurnManager, speaker: Speaker
+    ) -> None:
+        """Otherwise the agent greets the caller and then asks if they left.
+
+        The greeting is several seconds of the agent talking. Measured from the
+        start of the call, it spends most of the caller's first silence window
+        before they have had a chance to use it -- the same bug that made a
+        long list of appointment slots hang up on people.
+        """
+        await manager.greet("Thank you for calling.")
+        # The greeting ended here, as far as the manager can tell: it does not
+        # read the clock, so the first tick after playback is what dates it.
+        await manager.tick(now=T0 + timedelta(seconds=7))
+
+        await manager.tick(now=T0 + timedelta(seconds=14))
+
+        assert manager.stats.silence_prompts == 0, (
+            "the agent asked whether the caller was still there seven seconds "
+            "after it stopped talking to them"
+        )
+
+    async def test_silence_after_the_greeting_is_still_noticed(
+        self, manager: TurnManager, speaker: Speaker
+    ) -> None:
+        """Re-anchoring must delay the prompt, not disable it."""
+        await manager.greet("Thank you for calling.")
+        await manager.tick(now=T0 + timedelta(seconds=7))
+
+        await manager.tick(now=T0 + timedelta(seconds=16))
+
+        assert speaker.said[-1] == "Are you still there?"

@@ -22,6 +22,7 @@ from app.agents.orchestrator import Orchestrator
 from app.agents.state import SessionState
 from app.ai.budget_guard import BudgetGuard
 from app.ai.providers.base import STTProvider, TTSProvider, VoiceSpec
+from app.config.clinic import GREETING
 from app.observability.logging import get_logger
 from app.voice.models import CloseReason, VoiceState
 from app.voice.speech import for_speech
@@ -60,6 +61,7 @@ class VoiceSession:
         on_interrupt: Callable[[], Awaitable[None]] | None = None,
         drain: Callable[[], Awaitable[None]] | None = None,
         timings_sink: Callable[[str, float | None, float | None], Awaitable[None]] | None = None,
+        greeting: str | None = GREETING,
     ) -> None:
         self.session = session
         self.stt = stt
@@ -67,6 +69,9 @@ class VoiceSession:
         self.audio_out = audio_out
         self.guard = guard
         self.voice = voice or VoiceSpec()
+        #: Spoken as soon as the call connects. ``None`` for a call that should
+        #: open in silence -- a test asserting on what was synthesised, mostly.
+        self.greeting = greeting
         self.budget_exhausted = False
         #: Waits until emitted audio has actually been *heard*.
         #:
@@ -120,6 +125,11 @@ class VoiceSession:
         """
         self.manager.start()
         ticker = asyncio.create_task(self._tick_forever())
+        # A task, not an await: the recogniser's stream is opened by the line
+        # below, and greeting first would leave several seconds of the caller's
+        # audio queued against a connection nobody had made yet. Someone who
+        # answers over the greeting is the normal case, not the exception.
+        greeter = asyncio.create_task(self.manager.greet(self.greeting)) if self.greeting else None
         try:
             async for transcript in self.stt.transcribe_stream(self._timed(audio)):
                 if self.manager.state is VoiceState.CLOSED:
@@ -131,8 +141,13 @@ class VoiceSession:
                 await self.manager.on_transcript(transcript)
         finally:
             ticker.cancel()
+            if greeter is not None:
+                greeter.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await ticker
+            if greeter is not None:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await greeter
             # A stream that has ended is silence by definition, so anything
             # still buffered is a finished utterance. Flushing it means the
             # caller's last words are answered rather than dropped because

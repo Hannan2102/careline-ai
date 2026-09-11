@@ -19,6 +19,23 @@ CLINIC_TIMEZONE = ZoneInfo("America/New_York")
 CLINIC_NAME = "Oakwood Family Medicine"
 CLINIC_DISPLAY_NAME = "CareLine AI at Oakwood Family Medicine"
 
+#: What the caller hears before they have said anything.
+#:
+#: The agent speaks first for the same reason a receptionist does: a line that
+#: opens in silence leaves the caller guessing whether it connected, and the
+#: ones who guess wrong say "hello?" -- which carries no intent, so the first
+#: real turn is wasted on a menu. Opening with the clinic's name also tells
+#: someone who misdialled, before they have read out a date of birth.
+#:
+#: It says it is automated. That is not decoration: a caller who believes they
+#: reached a person will ask a person's questions, and being told afterwards is
+#: worse than being told now.
+GREETING = (
+    f"Thank you for calling {CLINIC_NAME}. "
+    "You're speaking with CareLine, an automated assistant. "
+    "How can I help you today?"
+)
+
 #: Monday=0 ... Sunday=6. Closed days are simply absent.
 WORKING_DAYS: frozenset[int] = frozenset({0, 1, 2, 3, 4})
 
