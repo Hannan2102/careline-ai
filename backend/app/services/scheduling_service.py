@@ -139,7 +139,9 @@ def classify_reason(reason: str | None) -> AppointmentClassification:
 
 
 def spread_offers(
-    slots: list[AvailableSlot], count: int = DEFAULT_OFFER_COUNT
+    slots: list[AvailableSlot],
+    count: int = DEFAULT_OFFER_COUNT,
+    distinct_days: bool = False,
 ) -> list[AvailableSlot]:
     """Pick a varied handful of times to offer.
 
@@ -148,6 +150,11 @@ def spread_offers(
     is one option presented three times. Preferring a different day or
     clinician for each offer gives the patient a real choice, then tops up from
     what is left if the schedule is too thin to vary.
+
+    ``distinct_days`` narrows that to one offer per day, for the caller who has
+    just said none of the first set worked. Three clinicians on the same
+    morning are three real choices the first time and one unwanted morning the
+    second, so what varies has to change when the answer was "not then".
     """
     if count <= 0 or not slots:
         return []
@@ -155,7 +162,7 @@ def spread_offers(
     chosen: list[AvailableSlot] = []
     seen: set[tuple[date, str]] = set()
     for slot in slots:
-        key = (slot.start.date(), slot.practitioner_ref)
+        key = (slot.start.date(), "" if distinct_days else slot.practitioner_ref)
         if key not in seen:
             seen.add(key)
             chosen.append(slot)
@@ -192,6 +199,7 @@ class SchedulingService:
         practitioner_ref: str | None = None,
         count: int = DEFAULT_OFFER_COUNT,
         now: datetime | None = None,
+        distinct_days: bool = False,
     ) -> list[AvailableSlot]:
         """A small, varied set of bookable times.
 
@@ -219,7 +227,7 @@ class SchedulingService:
             raise UpstreamUnavailableError(str(exc)) from exc
 
         bookable = [s for s in slots if s.start - moment >= MIN_BOOKING_LEAD]
-        return spread_offers(bookable, count)
+        return spread_offers(bookable, count, distinct_days=distinct_days)
 
     # ------------------------------------------------------------- writing
     async def book(

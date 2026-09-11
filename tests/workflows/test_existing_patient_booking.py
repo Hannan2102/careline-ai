@@ -22,6 +22,7 @@ from app.services.patient_service import PatientService
 from app.services.safety_service import SafetyService
 from app.services.scheduling_service import SchedulingService
 from app.services.verification_service import SecondFactorType, VerificationService
+from app.utils.formatting import local
 from app.workflows.base import AwaitedInput, WorkflowStatus
 from app.workflows.existing_patient_booking import (
     BookingInput,
@@ -240,17 +241,57 @@ class TestSlotSelection:
         assert confused.state == BookingState.OFFERING_SLOTS.value
         assert [o.slot_id for o in confused.offers] == [o.slot_id for o in offered.offers]
 
-    async def test_rejecting_every_offer_widens_the_search(
+    async def test_rejecting_every_offer_offers_different_times(
+        self, workflow: ExistingPatientBookingWorkflow, session: SessionState
+    ) -> None:
+        """ "None of those work" has to produce times they have not refused.
+
+        Widening the end of the search window does nothing on its own: the
+        earliest times still come back first, so a caller heard the same three
+        slots read out again in a different sentence. Observed live, and the
+        old version of this test asserted only that the window had changed --
+        which it had, uselessly.
+        """
+        await _verify(workflow, session)
+        first = await workflow.advance(session, BookingInput(reason="follow up"), now=NOW)
+        again = await workflow.advance(session, BookingInput(none_suitable=True), now=NOW)
+
+        assert again.state == BookingState.OFFERING_SLOTS.value
+        assert again.offers
+        rejected = {offer.slot_id for offer in first.offers}
+        assert not rejected & {offer.slot_id for offer in again.offers}, (
+            "offered a time the caller had just turned down"
+        )
+        assert min(o.start for o in again.offers) > max(o.start for o in first.offers)
+
+    async def test_the_second_set_spans_several_days(
+        self, workflow: ExistingPatientBookingWorkflow, session: SessionState
+    ) -> None:
+        """Three clinicians on one morning is one morning, not three choices.
+
+        Fine as an opening offer -- some callers do want the earliest thing
+        going. Once they have said no to that morning, what varies has to be
+        the day.
+        """
+        await _verify(workflow, session)
+        await workflow.advance(session, BookingInput(reason="follow up"), now=NOW)
+
+        again = await workflow.advance(session, BookingInput(none_suitable=True), now=NOW)
+
+        days = {local(offer.start).date() for offer in again.offers}
+        assert len(days) == len(again.offers), f"all on the same day: {again.message}"
+
+    async def test_rejecting_twice_keeps_moving_forward(
         self, workflow: ExistingPatientBookingWorkflow, session: SessionState
     ) -> None:
         await _verify(workflow, session)
-        first = await workflow.advance(session, BookingInput(reason="follow up"), now=NOW)
-        widened = await workflow.advance(session, BookingInput(none_suitable=True), now=NOW)
-        assert widened.state == BookingState.OFFERING_SLOTS.value
-        assert widened.offers
-        # A wider window may surface the same earliest times; the search range
-        # is what changed.
-        assert first.offers[0].start <= widened.offers[-1].start
+        await workflow.advance(session, BookingInput(reason="follow up"), now=NOW)
+        second = await workflow.advance(session, BookingInput(none_suitable=True), now=NOW)
+
+        third = await workflow.advance(session, BookingInput(none_suitable=True), now=NOW)
+
+        assert third.offers
+        assert min(o.start for o in third.offers) > max(o.start for o in second.offers)
 
     async def test_repeated_rejection_hands_over_to_a_human(
         self, workflow: ExistingPatientBookingWorkflow, session: SessionState

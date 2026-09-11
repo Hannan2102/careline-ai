@@ -32,6 +32,7 @@ from app.services.verification_service import (
     SecondFactorType,
     VerificationService,
 )
+from app.utils.formatting import local
 from app.workflows.base import (
     AwaitedInput,
     SlotOffer,
@@ -250,19 +251,41 @@ class ExistingPatientBookingWorkflow:
         appointment_type = AppointmentType(memory.get("appointment_type"))
         practitioner_ref = memory.get("practitioner_ref")
         search_days = int(memory.get("search_days", INITIAL_SEARCH_DAYS))
+        # Where the last round of offers got to. Searching from today again
+        # after the caller has said none of them worked returns the same times
+        # in a different sentence, which is how "none of those work" became a
+        # dead end on a live call: the same Wednesday morning, three times.
+        start = self._search_from(memory)
+        distinct_days = bool(memory.get("distinct_days", False))
 
-        offers = await self._find_offers(appointment_type, practitioner_ref, search_days, now)
+        offers = await self._find_offers(
+            appointment_type, practitioner_ref, search_days, now, start, distinct_days
+        )
 
         # Nothing in the initial window: widen once before giving up.
         if not offers and search_days < WIDENED_SEARCH_DAYS:
             search_days = WIDENED_SEARCH_DAYS
             memory.set("search_days", search_days)
-            offers = await self._find_offers(appointment_type, practitioner_ref, search_days, now)
+            offers = await self._find_offers(
+                appointment_type, practitioner_ref, search_days, now, start, distinct_days
+            )
+
+        # Still nothing later on: the diary runs out before the window does, so
+        # look again from the beginning rather than telling a caller with a
+        # half-empty diary in front of them that there is nothing at all.
+        if not offers and start is not None:
+            start = None
+            memory.set("search_from", None)
+            offers = await self._find_offers(
+                appointment_type, practitioner_ref, search_days, now, None, distinct_days
+            )
 
         # Still nothing with the requested clinician: try any of them.
         dropped_preference = False
         if not offers and practitioner_ref:
-            offers = await self._find_offers(appointment_type, None, search_days, now)
+            offers = await self._find_offers(
+                appointment_type, None, search_days, now, start, distinct_days
+            )
             if offers:
                 dropped_preference = True
                 memory.set("practitioner_ref", None)
@@ -299,6 +322,12 @@ class ExistingPatientBookingWorkflow:
 
         if turn.none_suitable:
             memory.set("search_days", WIDENED_SEARCH_DAYS)
+            # Start after the last day already offered, and vary by day rather
+            # than by clinician: somebody who has just turned down every time
+            # on a Wednesday morning is telling us about the morning, not
+            # about the doctor.
+            memory.set("search_from", self._day_after(offers))
+            memory.set("distinct_days", True)
             memory.set("rejected_count", int(memory.get("rejected_count", 0)) + 1)
             if int(memory.get("rejected_count", 0)) > 2:
                 return self._escalate(
@@ -426,15 +455,18 @@ class ExistingPatientBookingWorkflow:
         practitioner_ref: str | None,
         search_days: int,
         now: datetime,
+        start: date | None = None,
+        distinct_days: bool = False,
     ) -> tuple[SlotOffer, ...]:
-        start = now.date() + timedelta(days=1)
+        begin = start or now.date() + timedelta(days=1)
         slots = await self.scheduling.find_offers(
             appointment_type=appointment_type,
-            start_date=start,
-            end_date=start + timedelta(days=search_days),
+            start_date=begin,
+            end_date=begin + timedelta(days=search_days),
             practitioner_ref=practitioner_ref,
             count=DEFAULT_OFFER_COUNT,
             now=now,
+            distinct_days=distinct_days,
         )
         return tuple(
             SlotOffer(
@@ -447,6 +479,25 @@ class ExistingPatientBookingWorkflow:
             )
             for position, slot in enumerate(slots, start=1)
         )
+
+    @staticmethod
+    def _search_from(memory: WorkflowMemory) -> date | None:
+        """The day the next search starts, once a round has been rejected."""
+        stored = memory.get("search_from")
+        return date.fromisoformat(stored) if isinstance(stored, str) else None
+
+    @staticmethod
+    def _day_after(offers: tuple[SlotOffer, ...]) -> str | None:
+        """The day after the last one offered, in clinic-local terms.
+
+        Local, because the offer was spoken in local time: a 9 PM UTC slot is
+        the same afternoon to the caller, and stepping past "tomorrow" by the
+        stored date would skip a day they never heard about.
+        """
+        if not offers:
+            return None
+        latest = max(local(offer.start).date() for offer in offers)
+        return (latest + timedelta(days=1)).isoformat()
 
     @staticmethod
     def _offer_preamble(

@@ -422,17 +422,32 @@ NO_WORDS = frozenset(
         "wait",
     }
 )
+#: Ways of saying "not one of those".
+#:
+#: Only consulted while times are on the table, which is what makes the looser
+#: phrasings safe: "anything else" is a request for other times when it
+#: follows a list of them, whatever it means anywhere else.
 NONE_SUITABLE = (
     "none of those",
     "none of them",
+    "none of these",
+    "none work",
     "nothing works",
+    "nothing suits",
     "neither",
     "any other",
+    "anything else",
     "something else",
-    "anything else that",
+    "what else",
     "other times",
+    "other days",
+    "another day",
     "doesn't work",
+    "don't work",
     "won't work",
+    "no good",
+    "too early",
+    "too late",
 )
 
 ORDINAL_WORDS: dict[str, int] = {

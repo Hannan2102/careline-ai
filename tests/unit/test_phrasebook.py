@@ -299,3 +299,39 @@ class TestNothingDeadEnds:
         session = SessionState(session_id="sess-phrase", created_at=SEED_NOW)
         result = await orchestrator.handle_turn(session, utterance, now=SEED_NOW)
         assert result.message == HUMAN_MESSAGE
+
+
+REJECTING_THE_TIMES = (
+    "None of those work",
+    "None of them suit me",
+    "Have you got anything else?",
+    "What else have you got?",
+    "Something else please",
+    "Have you got another day?",
+    "Those don't work for me",
+    "That's too early",
+    "Any other times?",
+)
+
+
+class TestTurningDownEveryTime:
+    """ "Not one of those" said nine ways, all of which mean search again.
+
+    Read only while times are on the table, which is what makes the looser
+    phrasings safe: "anything else" is a request for other times when it
+    follows a list of them. A rejection the agent does not hear is a caller
+    being read the same three slots a second time.
+    """
+
+    @pytest.mark.parametrize("utterance", REJECTING_THE_TIMES)
+    def test_it_reads_as_a_rejection(self, utterance: str) -> None:
+        extracted = RuleBasedExtractor().extract(utterance, ExtractionContext())
+        assert extracted.none_suitable
+
+    @pytest.mark.parametrize(
+        "utterance",
+        ["The second one", "Tuesday please", "Yes, book it", "The first one, please"],
+    )
+    def test_choosing_one_is_not_rejecting_them_all(self, utterance: str) -> None:
+        extracted = RuleBasedExtractor().extract(utterance, ExtractionContext())
+        assert not extracted.none_suitable
