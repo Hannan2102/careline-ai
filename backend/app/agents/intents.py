@@ -18,6 +18,7 @@ class Intent(StrEnum):
     RESCHEDULE_APPOINTMENT = "reschedule_appointment"
     MEDICATION_LOOKUP = "medication_lookup"
     REFILL_REQUEST = "refill_request"
+    COVERAGE_LOOKUP = "coverage_lookup"
     CLINIC_FAQ = "clinic_faq"
     HUMAN_REQUESTED = "human_requested"
     UNKNOWN = "unknown"

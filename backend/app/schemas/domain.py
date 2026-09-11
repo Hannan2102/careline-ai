@@ -212,6 +212,38 @@ class Condition(BaseModel):
     clinical_status: str = "active"
 
 
+class Coverage(BaseModel):
+    """A patient's insurance cover, as the clinic has it on file.
+
+    Every field is what the *clinic* recorded, not what the insurer would say
+    today. Eligibility, remaining deductible and the price of a particular
+    visit are all live questions for the payer, and none of them are answerable
+    from this record -- which is why the workflow that reads it quotes the plan
+    and hands anything about money to the front desk (SAFETY.md).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    coverage_id: str
+    patient_ref: str
+    #: The plan as printed on the card, e.g. "Blue Shield PPO (demo)".
+    plan_name: str
+    #: The insurer. Often the same organisation as the plan, and not always.
+    payer_name: str | None = None
+    #: The member number on the card. PHI, and disclosed only to a verified
+    #: caller like any other record field.
+    subscriber_id: str | None = None
+    #: FHIR calls this `status`; "active" or "cancelled" are the two that
+    #: matter here.
+    status: str = "active"
+    #: When cover ends, when the record says so.
+    period_end: date | None = None
+
+    @property
+    def is_active(self) -> bool:
+        return self.status == "active"
+
+
 class Allergy(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -271,6 +303,7 @@ class AuditAction(StrEnum):
     APPOINTMENT_CANCELLED = "appointment.cancelled"
     APPOINTMENT_RESCHEDULED = "appointment.rescheduled"
     MEDICATIONS_READ = "medication.read"
+    COVERAGE_READ = "coverage.read"
     REFILL_REQUESTED = "refill.requested"
     ESCALATION_CREATED = "escalation.created"
     ACCESS_DENIED = "access.denied"

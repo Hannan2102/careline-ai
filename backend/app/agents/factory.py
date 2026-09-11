@@ -19,6 +19,7 @@ from app.db.repositories import total_estimated_cost
 from app.ehr.base import EHRProvider
 from app.ehr.factory import build_ehr_provider
 from app.services.audit_service import AuditService
+from app.services.coverage_service import CoverageService
 from app.services.escalation_service import EscalationService
 from app.services.medication_service import MedicationService
 from app.services.patient_service import PatientService
@@ -114,6 +115,7 @@ def build_runtime(
         verification=VerificationService(patients, escalations),
         scheduling=SchedulingService(provider),
         medications=MedicationService(provider),
+        coverage=CoverageService(provider),
         refills=refills,
         escalations=escalations,
         audit=audit,

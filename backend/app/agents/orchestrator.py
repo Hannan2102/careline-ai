@@ -33,6 +33,7 @@ from app.safety.models import SafetyOutcome
 from app.schemas.domain import EscalationCategory
 from app.services.audit_service import AuditService
 from app.services.base import NotVerifiedError
+from app.services.coverage_service import CoverageService
 from app.services.escalation_service import EscalationService
 from app.services.medication_service import MedicationService
 from app.services.persistence_service import PersistenceService
@@ -47,6 +48,7 @@ from app.workflows.appointment_management import (
 )
 from app.workflows.base import AwaitedInput, SlotOffer, WorkflowResponse
 from app.workflows.clinic_faq import ClinicFaqInput, ClinicFaqWorkflow
+from app.workflows.coverage_lookup import CoverageLookupInput, CoverageLookupWorkflow
 from app.workflows.existing_patient_booking import (
     BookingInput,
     ExistingPatientBookingWorkflow,
@@ -97,6 +99,7 @@ class Orchestrator:
         scheduling: SchedulingService,
         medications: MedicationService,
         refills: RefillService,
+        coverage: CoverageService,
         escalations: EscalationService,
         audit: AuditService | None = None,
         extractor: TurnExtractor | None = None,
@@ -124,6 +127,7 @@ class Orchestrator:
         self.refill = RefillRequestWorkflow(
             verification, medications, refills, escalations, self.audit
         )
+        self.coverage = CoverageLookupWorkflow(verification, coverage, escalations, self.audit)
         self.faq = ClinicFaqWorkflow(escalations)
 
     # ------------------------------------------------------------ one turn
@@ -236,6 +240,11 @@ class Orchestrator:
                 return await self.lookup.advance(
                     session, self._lookup_input(extracted, utterance), now=now
                 )
+            case Intent.COVERAGE_LOOKUP:
+                await self.coverage.start(session)
+                return await self.coverage.advance(
+                    session, self._coverage_input(extracted, utterance), now=now
+                )
             case Intent.REFILL_REQUEST:
                 await self.refill.start(session)
                 return await self.refill.advance(
@@ -268,6 +277,10 @@ class Orchestrator:
             if active == self.lookup.name:
                 return await self.lookup.advance(
                     session, self._lookup_input(extracted, utterance), now=now
+                )
+            if active == self.coverage.name:
+                return await self.coverage.advance(
+                    session, self._coverage_input(extracted, utterance), now=now
                 )
             if active == self.refill.name:
                 return await self.refill.advance(
@@ -330,6 +343,15 @@ class Orchestrator:
             second_factor_value=extracted.second_factor_value,
             medication_name=extracted.medication_name,
             confirm=extracted.confirm,
+        )
+
+    @staticmethod
+    def _coverage_input(extracted: ExtractedTurn, utterance: str) -> CoverageLookupInput:
+        return CoverageLookupInput(
+            utterance=utterance,
+            full_name=extracted.full_name,
+            date_of_birth=extracted.date_of_birth,
+            second_factor_value=extracted.second_factor_value,
         )
 
     # ------------------------------------------------------------- context

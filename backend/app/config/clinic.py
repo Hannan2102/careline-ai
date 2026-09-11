@@ -130,6 +130,11 @@ CLINIC_FAQ: dict[str, str] = {
         "the phone, and there's a short intake form to complete when you arrive."
     ),
     "insurance": "We accept " + ", ".join(ACCEPTED_INSURANCE) + ".",
+    "billing": (
+        "I can't quote what a visit will cost you, because that depends on your "
+        "plan and your remaining deductible. Our front desk can check that "
+        "against your cover and give you a figure before you come in."
+    ),
     "providers": (
         "Our providers are "
         + ", ".join(f"{p.display_name} ({p.specialty})" for p in PRACTITIONERS)
@@ -170,6 +175,23 @@ FAQ_TOPIC_ALIASES: dict[str, str] = {
     "new_patient_process": "new_patient_process",
     "insurance": "insurance",
     "coverage": "insurance",
+    # Money, which is not the same question as which plans are accepted.
+    # Deliberately narrow substrings: matching is `in`, not whole-word, so
+    # "fee" would fire on "I feel dizzy" and "charge" on "discharge" -- both
+    # clinical utterances, and neither a billing question.
+    "copay": "billing",
+    "co_pay": "billing",
+    "deductible": "billing",
+    "out_of_pocket": "billing",
+    "how_much_will_it_cost": "billing",
+    "how_much_does_it_cost": "billing",
+    "how_much_will_this_cost": "billing",
+    "how_much_do_you_charge": "billing",
+    "cost_me": "billing",
+    "the_cost": "billing",
+    "price": "billing",
+    "billing": "billing",
+    "my_bill": "billing",
     "insured": "insurance",
     "covered": "insurance",
     # The carrier as people say it, not as the plan is filed: nobody asks "do

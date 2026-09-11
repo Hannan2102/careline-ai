@@ -408,3 +408,37 @@ class TestStaffReads:
             *window, statuses=(AppointmentStatus.BOOKED, AppointmentStatus.CANCELLED)
         )
         assert before[0].appointment_id in {a.appointment_id for a in including_cancelled}
+
+
+class TestCoverage:
+    """Insurance cover, held to the same contract by both providers."""
+
+    async def test_active_cover_is_returned(self, ehr: EHRProvider) -> None:
+        records = await ehr.get_coverage(JOHN_SMITH)
+        assert [c.plan_name for c in records] == ["Blue Shield PPO (demo)"]
+        assert records[0].patient_ref == JOHN_SMITH
+        assert records[0].is_active
+
+    async def test_a_patient_with_no_cover_gets_an_empty_list(self, ehr: EHRProvider) -> None:
+        """Not an error. Plenty of patients have never handed over a card."""
+        assert await ehr.get_coverage("Patient/demo-robert-johnson-b") == []
+
+    async def test_lapsed_cover_is_returned_and_marked(self, ehr: EHRProvider) -> None:
+        """Present but cancelled, on purpose.
+
+        The distinction matters to the caller: "nothing on file" and "the plan
+        you are holding has expired" are different answers, and the second is
+        the one a patient with an old card needs to hear.
+        """
+        records = await ehr.get_coverage("Patient/demo-robert-johnson-a")
+        assert len(records) == 1
+        assert records[0].plan_name == "Statewide Medicaid (demo)"
+        assert not records[0].is_active
+
+    async def test_cover_is_scoped_to_the_patient_asked_about(self, ehr: EHRProvider) -> None:
+        records = await ehr.get_coverage("Patient/demo-maria-garcia")
+        assert all(c.patient_ref == "Patient/demo-maria-garcia" for c in records)
+        assert [c.plan_name for c in records] == ["Meridian Health HMO (demo)"]
+
+    async def test_an_unknown_patient_has_no_cover(self, ehr: EHRProvider) -> None:
+        assert await ehr.get_coverage("Patient/does-not-exist") == []

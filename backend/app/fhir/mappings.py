@@ -24,6 +24,7 @@ from app.schemas.domain import (
     AppointmentType,
     AvailableSlot,
     Condition,
+    Coverage,
     MedicationSummary,
     Patient,
     Practitioner,
@@ -206,6 +207,30 @@ def condition_to_domain(resource: FhirResource) -> Condition:
         patient_ref=get_path(resource, "subject", "reference", default=""),
         display_name=display,
         clinical_status=get_path(resource, "clinicalStatus", "coding", 0, "code", default="active"),
+    )
+
+
+def coverage_to_domain(resource: FhirResource) -> Coverage:
+    """Map a FHIR ``Coverage`` to the domain record.
+
+    The plan name is taken from ``type.text`` first and the coding display
+    second, matching how every other mapping here resolves a human label. A
+    Coverage with no readable plan name is a mapping error rather than a blank:
+    reading "you are covered by" followed by nothing is worse than failing.
+    """
+    plan = get_path(resource, "type", "text") or get_path(resource, "type", "coding", 0, "display")
+    if not plan:
+        raise EHRMappingError(f"Coverage {resource.get('id')!r} has no plan name")
+
+    period_end = get_path(resource, "period", "end")
+    return Coverage(
+        coverage_id=resource["id"],
+        patient_ref=get_path(resource, "beneficiary", "reference", default=""),
+        plan_name=plan,
+        payer_name=get_path(resource, "payor", 0, "display"),
+        subscriber_id=resource.get("subscriberId"),
+        status=resource.get("status", "active"),
+        period_end=date.fromisoformat(period_end) if period_end else None,
     )
 
 

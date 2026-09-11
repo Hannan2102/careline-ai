@@ -3,100 +3,295 @@
     "resourceType": "Patient",
     "id": "demo-john-smith",
     "active": true,
-    "name": [{"use": "official", "family": "Smith", "given": ["John"]}],
+    "name": [
+      {
+        "use": "official",
+        "family": "Smith",
+        "given": [
+          "John"
+        ]
+      }
+    ],
     "gender": "male",
     "birthDate": "1985-02-15",
     "telecom": [
-      {"system": "phone", "value": "(555) 019-0142", "use": "home"},
-      {"system": "email", "value": "john.smith@example.invalid"}
+      {
+        "system": "phone",
+        "value": "(555) 019-0142",
+        "use": "home"
+      },
+      {
+        "system": "email",
+        "value": "john.smith@example.invalid"
+      }
     ],
-    "address": [{"line": ["88 Rosewood Lane"], "city": "Riverton", "state": "OH", "postalCode": "45042", "country": "US"}],
-    "generalPractitioner": [{"reference": "Practitioner/prac-sarah-patel"}]
+    "address": [
+      {
+        "line": [
+          "88 Rosewood Lane"
+        ],
+        "city": "Riverton",
+        "state": "OH",
+        "postalCode": "45042",
+        "country": "US"
+      }
+    ],
+    "generalPractitioner": [
+      {
+        "reference": "Practitioner/prac-sarah-patel"
+      }
+    ]
   },
   {
     "resourceType": "Condition",
     "id": "cond-john-diabetes",
-    "clinicalStatus": {"coding": [{"system": "http://terminology.hl7.org/CodeSystem/condition-clinical", "code": "active"}]},
-    "code": {"coding": [{"system": "http://snomed.info/sct", "code": "44054006", "display": "Type 2 diabetes mellitus"}], "text": "Type 2 Diabetes"},
-    "subject": {"reference": "Patient/demo-john-smith"},
+    "clinicalStatus": {
+      "coding": [
+        {
+          "system": "http://terminology.hl7.org/CodeSystem/condition-clinical",
+          "code": "active"
+        }
+      ]
+    },
+    "code": {
+      "coding": [
+        {
+          "system": "http://snomed.info/sct",
+          "code": "44054006",
+          "display": "Type 2 diabetes mellitus"
+        }
+      ],
+      "text": "Type 2 Diabetes"
+    },
+    "subject": {
+      "reference": "Patient/demo-john-smith"
+    },
     "recordedDate": "2021-03-11"
   },
   {
     "resourceType": "Condition",
     "id": "cond-john-hypertension",
-    "clinicalStatus": {"coding": [{"system": "http://terminology.hl7.org/CodeSystem/condition-clinical", "code": "active"}]},
-    "code": {"coding": [{"system": "http://snomed.info/sct", "code": "38341003", "display": "Hypertensive disorder"}], "text": "Hypertension"},
-    "subject": {"reference": "Patient/demo-john-smith"},
+    "clinicalStatus": {
+      "coding": [
+        {
+          "system": "http://terminology.hl7.org/CodeSystem/condition-clinical",
+          "code": "active"
+        }
+      ]
+    },
+    "code": {
+      "coding": [
+        {
+          "system": "http://snomed.info/sct",
+          "code": "38341003",
+          "display": "Hypertensive disorder"
+        }
+      ],
+      "text": "Hypertension"
+    },
+    "subject": {
+      "reference": "Patient/demo-john-smith"
+    },
     "recordedDate": "2020-08-02"
   },
   {
     "resourceType": "AllergyIntolerance",
     "id": "allergy-john-penicillin",
-    "clinicalStatus": {"coding": [{"system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical", "code": "active"}]},
+    "clinicalStatus": {
+      "coding": [
+        {
+          "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+          "code": "active"
+        }
+      ]
+    },
     "type": "allergy",
     "criticality": "high",
-    "code": {"coding": [{"system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "7980", "display": "Penicillin G"}], "text": "Penicillin"},
-    "patient": {"reference": "Patient/demo-john-smith"},
-    "reaction": [{"manifestation": [{"text": "Hives"}]}]
+    "code": {
+      "coding": [
+        {
+          "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+          "code": "7980",
+          "display": "Penicillin G"
+        }
+      ],
+      "text": "Penicillin"
+    },
+    "patient": {
+      "reference": "Patient/demo-john-smith"
+    },
+    "reaction": [
+      {
+        "manifestation": [
+          {
+            "text": "Hives"
+          }
+        ]
+      }
+    ]
   },
   {
     "resourceType": "MedicationRequest",
     "id": "medreq-john-metformin",
     "status": "active",
     "intent": "order",
-    "subject": {"reference": "Patient/demo-john-smith"},
-    "requester": {"reference": "Practitioner/prac-sarah-patel"},
+    "subject": {
+      "reference": "Patient/demo-john-smith"
+    },
+    "requester": {
+      "reference": "Practitioner/prac-sarah-patel"
+    },
     "authoredOn": "2026-03-02",
     "medicationCodeableConcept": {
-      "coding": [{"system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "860975", "display": "Metformin hydrochloride 500 MG oral tablet"}],
+      "coding": [
+        {
+          "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+          "code": "860975",
+          "display": "Metformin hydrochloride 500 MG oral tablet"
+        }
+      ],
       "text": "Metformin 500 mg"
     },
-    "dosageInstruction": [{"text": "One tablet twice daily with meals"}],
-    "dispenseRequest": {"numberOfRepeatsAllowed": 3, "quantity": {"value": 60, "unit": "tablet"}}
+    "dosageInstruction": [
+      {
+        "text": "One tablet twice daily with meals"
+      }
+    ],
+    "dispenseRequest": {
+      "numberOfRepeatsAllowed": 3,
+      "quantity": {
+        "value": 60,
+        "unit": "tablet"
+      }
+    }
   },
   {
     "resourceType": "MedicationRequest",
     "id": "medreq-john-lisinopril",
     "status": "active",
     "intent": "order",
-    "subject": {"reference": "Patient/demo-john-smith"},
-    "requester": {"reference": "Practitioner/prac-sarah-patel"},
+    "subject": {
+      "reference": "Patient/demo-john-smith"
+    },
+    "requester": {
+      "reference": "Practitioner/prac-sarah-patel"
+    },
     "authoredOn": "2026-03-02",
     "medicationCodeableConcept": {
-      "coding": [{"system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "314076", "display": "Lisinopril 10 MG oral tablet"}],
+      "coding": [
+        {
+          "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+          "code": "314076",
+          "display": "Lisinopril 10 MG oral tablet"
+        }
+      ],
       "text": "Lisinopril 10 mg"
     },
-    "dosageInstruction": [{"text": "One tablet once daily"}],
-    "dispenseRequest": {"numberOfRepeatsAllowed": 2, "quantity": {"value": 30, "unit": "tablet"}}
+    "dosageInstruction": [
+      {
+        "text": "One tablet once daily"
+      }
+    ],
+    "dispenseRequest": {
+      "numberOfRepeatsAllowed": 2,
+      "quantity": {
+        "value": 30,
+        "unit": "tablet"
+      }
+    }
   },
   {
     "resourceType": "Encounter",
     "id": "enc-john-2026-03-02",
     "status": "finished",
-    "class": {"system": "http://terminology.hl7.org/CodeSystem/v3-ActCode", "code": "AMB", "display": "ambulatory"},
-    "subject": {"reference": "Patient/demo-john-smith"},
-    "participant": [{"individual": {"reference": "Practitioner/prac-sarah-patel"}}],
-    "period": {"start": "2026-03-02T14:00:00Z", "end": "2026-03-02T14:30:00Z"},
-    "reasonCode": [{"text": "Diabetes follow-up"}]
+    "class": {
+      "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+      "code": "AMB",
+      "display": "ambulatory"
+    },
+    "subject": {
+      "reference": "Patient/demo-john-smith"
+    },
+    "participant": [
+      {
+        "individual": {
+          "reference": "Practitioner/prac-sarah-patel"
+        }
+      }
+    ],
+    "period": {
+      "start": "2026-03-02T14:00:00Z",
+      "end": "2026-03-02T14:30:00Z"
+    },
+    "reasonCode": [
+      {
+        "text": "Diabetes follow-up"
+      }
+    ]
   },
-
   {
     "resourceType": "Patient",
     "id": "demo-maria-garcia",
     "active": true,
-    "name": [{"use": "official", "family": "Garcia", "given": ["Maria"]}],
+    "name": [
+      {
+        "use": "official",
+        "family": "Garcia",
+        "given": [
+          "Maria"
+        ]
+      }
+    ],
     "gender": "female",
     "birthDate": "1972-11-03",
-    "telecom": [{"system": "phone", "value": "(555) 019-0288", "use": "mobile"}],
-    "address": [{"line": ["12 Belmont Court"], "city": "Riverton", "state": "OH", "postalCode": "45044", "country": "US"}],
-    "generalPractitioner": [{"reference": "Practitioner/prac-emily-chen"}]
+    "telecom": [
+      {
+        "system": "phone",
+        "value": "(555) 019-0288",
+        "use": "mobile"
+      }
+    ],
+    "address": [
+      {
+        "line": [
+          "12 Belmont Court"
+        ],
+        "city": "Riverton",
+        "state": "OH",
+        "postalCode": "45044",
+        "country": "US"
+      }
+    ],
+    "generalPractitioner": [
+      {
+        "reference": "Practitioner/prac-emily-chen"
+      }
+    ]
   },
   {
     "resourceType": "Condition",
     "id": "cond-maria-asthma",
-    "clinicalStatus": {"coding": [{"system": "http://terminology.hl7.org/CodeSystem/condition-clinical", "code": "active"}]},
-    "code": {"coding": [{"system": "http://snomed.info/sct", "code": "195967001", "display": "Asthma"}], "text": "Asthma"},
-    "subject": {"reference": "Patient/demo-maria-garcia"},
+    "clinicalStatus": {
+      "coding": [
+        {
+          "system": "http://terminology.hl7.org/CodeSystem/condition-clinical",
+          "code": "active"
+        }
+      ]
+    },
+    "code": {
+      "coding": [
+        {
+          "system": "http://snomed.info/sct",
+          "code": "195967001",
+          "display": "Asthma"
+        }
+      ],
+      "text": "Asthma"
+    },
+    "subject": {
+      "reference": "Patient/demo-maria-garcia"
+    },
     "recordedDate": "2019-06-19"
   },
   {
@@ -104,65 +299,256 @@
     "id": "medreq-maria-albuterol",
     "status": "active",
     "intent": "order",
-    "subject": {"reference": "Patient/demo-maria-garcia"},
-    "requester": {"reference": "Practitioner/prac-emily-chen"},
+    "subject": {
+      "reference": "Patient/demo-maria-garcia"
+    },
+    "requester": {
+      "reference": "Practitioner/prac-emily-chen"
+    },
     "authoredOn": "2026-01-20",
     "medicationCodeableConcept": {
-      "coding": [{"system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "745752", "display": "Albuterol 0.09 MG/ACTUAT inhaler"}],
+      "coding": [
+        {
+          "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+          "code": "745752",
+          "display": "Albuterol 0.09 MG/ACTUAT inhaler"
+        }
+      ],
       "text": "Albuterol inhaler"
     },
-    "dosageInstruction": [{"text": "Two puffs every four to six hours as needed for shortness of breath"}],
-    "dispenseRequest": {"numberOfRepeatsAllowed": 1}
+    "dosageInstruction": [
+      {
+        "text": "Two puffs every four to six hours as needed for shortness of breath"
+      }
+    ],
+    "dispenseRequest": {
+      "numberOfRepeatsAllowed": 1
+    }
   },
-
   {
     "resourceType": "Patient",
     "id": "demo-linda-nguyen",
     "active": true,
-    "name": [{"use": "official", "family": "Nguyen", "given": ["Linda"]}],
+    "name": [
+      {
+        "use": "official",
+        "family": "Nguyen",
+        "given": [
+          "Linda"
+        ]
+      }
+    ],
     "gender": "female",
     "birthDate": "1958-04-30",
-    "telecom": [{"system": "phone", "value": "(555) 019-0377", "use": "home"}],
-    "address": [{"line": ["5 Kingsley Road"], "city": "Riverton", "state": "OH", "postalCode": "45042", "country": "US"}],
-    "generalPractitioner": [{"reference": "Practitioner/prac-michael-johnson"}]
+    "telecom": [
+      {
+        "system": "phone",
+        "value": "(555) 019-0377",
+        "use": "home"
+      }
+    ],
+    "address": [
+      {
+        "line": [
+          "5 Kingsley Road"
+        ],
+        "city": "Riverton",
+        "state": "OH",
+        "postalCode": "45042",
+        "country": "US"
+      }
+    ],
+    "generalPractitioner": [
+      {
+        "reference": "Practitioner/prac-michael-johnson"
+      }
+    ]
   },
   {
     "resourceType": "MedicationRequest",
     "id": "medreq-linda-atorvastatin",
     "status": "active",
     "intent": "order",
-    "subject": {"reference": "Patient/demo-linda-nguyen"},
-    "requester": {"reference": "Practitioner/prac-michael-johnson"},
+    "subject": {
+      "reference": "Patient/demo-linda-nguyen"
+    },
+    "requester": {
+      "reference": "Practitioner/prac-michael-johnson"
+    },
     "authoredOn": "2025-11-14",
     "medicationCodeableConcept": {
-      "coding": [{"system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "259255", "display": "Atorvastatin 20 MG oral tablet"}],
+      "coding": [
+        {
+          "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+          "code": "259255",
+          "display": "Atorvastatin 20 MG oral tablet"
+        }
+      ],
       "text": "Atorvastatin 20 mg"
     },
     "_comment": "DELIBERATE FIXTURE: no dosageInstruction.text. The agent must say it cannot find the instruction and escalate - never assemble a dosage from structured fields (SAFETY.md).",
-    "dispenseRequest": {"numberOfRepeatsAllowed": 0}
+    "dispenseRequest": {
+      "numberOfRepeatsAllowed": 0
+    }
   },
-
   {
     "resourceType": "Patient",
     "id": "demo-robert-johnson-a",
     "active": true,
-    "name": [{"use": "official", "family": "Johnson", "given": ["Robert"]}],
+    "name": [
+      {
+        "use": "official",
+        "family": "Johnson",
+        "given": [
+          "Robert"
+        ]
+      }
+    ],
     "gender": "male",
     "birthDate": "1990-06-21",
-    "telecom": [{"system": "phone", "value": "(555) 019-0411", "use": "mobile"}],
-    "address": [{"line": ["31 Larch Street"], "city": "Riverton", "state": "OH", "postalCode": "45042", "country": "US"}],
-    "generalPractitioner": [{"reference": "Practitioner/prac-sarah-patel"}]
+    "telecom": [
+      {
+        "system": "phone",
+        "value": "(555) 019-0411",
+        "use": "mobile"
+      }
+    ],
+    "address": [
+      {
+        "line": [
+          "31 Larch Street"
+        ],
+        "city": "Riverton",
+        "state": "OH",
+        "postalCode": "45042",
+        "country": "US"
+      }
+    ],
+    "generalPractitioner": [
+      {
+        "reference": "Practitioner/prac-sarah-patel"
+      }
+    ]
   },
   {
     "resourceType": "Patient",
     "id": "demo-robert-johnson-b",
     "active": true,
-    "name": [{"use": "official", "family": "Johnson", "given": ["Robert"]}],
+    "name": [
+      {
+        "use": "official",
+        "family": "Johnson",
+        "given": [
+          "Robert"
+        ]
+      }
+    ],
     "gender": "male",
     "birthDate": "1990-06-21",
-    "telecom": [{"system": "phone", "value": "(555) 019-0522", "use": "home"}],
-    "address": [{"line": ["204 Fairmount Way"], "city": "Riverton", "state": "OH", "postalCode": "45067", "country": "US"}],
-    "generalPractitioner": [{"reference": "Practitioner/prac-emily-chen"}],
+    "telecom": [
+      {
+        "system": "phone",
+        "value": "(555) 019-0522",
+        "use": "home"
+      }
+    ],
+    "address": [
+      {
+        "line": [
+          "204 Fairmount Way"
+        ],
+        "city": "Riverton",
+        "state": "OH",
+        "postalCode": "45067",
+        "country": "US"
+      }
+    ],
+    "generalPractitioner": [
+      {
+        "reference": "Practitioner/prac-emily-chen"
+      }
+    ],
     "_comment": "DELIBERATE FIXTURE: identical name and DOB to demo-robert-johnson-a. Forces the second-factor path; the agent must never disambiguate by leaking either record (ADR 003)."
+  },
+  {
+    "resourceType": "Coverage",
+    "id": "demo-coverage-john-smith",
+    "status": "active",
+    "type": {
+      "text": "Blue Shield PPO (demo)"
+    },
+    "beneficiary": {
+      "reference": "Patient/demo-john-smith"
+    },
+    "payor": [
+      {
+        "display": "Blue Shield of Ohio (demo)"
+      }
+    ],
+    "subscriberId": "BS-4417-0001",
+    "period": {
+      "end": "2027-12-31"
+    }
+  },
+  {
+    "resourceType": "Coverage",
+    "id": "demo-coverage-maria-garcia",
+    "status": "active",
+    "type": {
+      "text": "Meridian Health HMO (demo)"
+    },
+    "beneficiary": {
+      "reference": "Patient/demo-maria-garcia"
+    },
+    "payor": [
+      {
+        "display": "Meridian Health (demo)"
+      }
+    ],
+    "subscriberId": "MH-2290-0002",
+    "period": {
+      "end": "2027-12-31"
+    }
+  },
+  {
+    "resourceType": "Coverage",
+    "id": "demo-coverage-linda-nguyen",
+    "status": "active",
+    "type": {
+      "text": "Medicare Part B (demo)"
+    },
+    "beneficiary": {
+      "reference": "Patient/demo-linda-nguyen"
+    },
+    "payor": [
+      {
+        "display": "Medicare (demo)"
+      }
+    ],
+    "subscriberId": "MB-7781-0003",
+    "period": {
+      "end": "2027-12-31"
+    }
+  },
+  {
+    "resourceType": "Coverage",
+    "id": "demo-coverage-robert-johnson-a",
+    "status": "cancelled",
+    "type": {
+      "text": "Statewide Medicaid (demo)"
+    },
+    "beneficiary": {
+      "reference": "Patient/demo-robert-johnson-a"
+    },
+    "payor": [
+      {
+        "display": "Statewide Medicaid (demo)"
+      }
+    ],
+    "subscriberId": "SM-5512-0004",
+    "period": {
+      "end": "2026-03-31"
+    },
+    "_comment": "Lapsed on purpose: exercises the expired-cover path."
   }
 ]

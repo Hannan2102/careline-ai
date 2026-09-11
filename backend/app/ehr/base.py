@@ -24,6 +24,7 @@ from app.schemas.domain import (
     AppointmentType,
     AvailableSlot,
     Condition,
+    Coverage,
     MedicationSummary,
     Patient,
     Practitioner,
@@ -204,3 +205,13 @@ class EHRProvider(ABC):
 
     @abstractmethod
     async def get_allergies(self, patient_ref: str) -> list[Allergy]: ...
+
+    @abstractmethod
+    async def get_coverage(self, patient_ref: str) -> list[Coverage]:
+        """Insurance cover on file for the patient.
+
+        A list, because a patient can hold more than one -- a primary plan and
+        a secondary, or an old plan that has not been removed. Ordering is the
+        provider's; callers that want the current one must filter on status.
+        """
+        ...

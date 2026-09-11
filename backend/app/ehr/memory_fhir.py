@@ -26,6 +26,7 @@ from app.fhir.mappings import (
     appointment_to_domain,
     appointment_to_fhir,
     condition_to_domain,
+    coverage_to_domain,
     medication_request_to_domain,
     new_patient_reference,
     patient_to_domain,
@@ -39,6 +40,7 @@ from app.schemas.domain import (
     AppointmentType,
     AvailableSlot,
     Condition,
+    Coverage,
     MedicationSummary,
     Patient,
     Practitioner,
@@ -297,6 +299,13 @@ class MemoryFHIRProvider(EHRProvider):
             condition_to_domain(resource)
             for resource in self.store.all_of("Condition")
             if get_path(resource, "subject", "reference") == patient_ref
+        ]
+
+    async def get_coverage(self, patient_ref: str) -> list[Coverage]:
+        return [
+            coverage_to_domain(resource)
+            for resource in self.store.all_of("Coverage")
+            if get_path(resource, "beneficiary", "reference") == patient_ref
         ]
 
     async def get_allergies(self, patient_ref: str) -> list[Allergy]:

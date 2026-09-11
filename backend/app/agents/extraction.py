@@ -66,6 +66,40 @@ class TurnExtractor(Protocol):
 # Vocabulary
 # --------------------------------------------------------------------------
 
+#: Asking about the cover *this caller* holds, which is a record read and needs
+#: verification. Which plans the clinic accepts is a different question with a
+#: different answer, held in static configuration and given to anyone who asks
+#: (config/clinic.py).
+#:
+#: The two overlap in almost every word, so the possessive is what separates
+#: them: "my insurance" against "what insurance do you take".
+PERSONAL_COVERAGE_PHRASES: tuple[str, ...] = (
+    "my insurance",
+    "my cover",
+    "my coverage",
+    "my plan",
+    "am i covered",
+    "am i insured",
+    "what insurance do i have",
+    "what insurance am i on",
+    "insurance on file",
+    "my member number",
+    "my policy",
+)
+
+#: Phrasings that make a question about the clinic however possessive it looks.
+#: "Do you take my insurance?" mentions the caller's plan and is really asking
+#: which plans are accepted -- answerable without making them verify.
+CLINIC_DIRECTED_MARKERS: tuple[str, ...] = (
+    "do you take",
+    "do you accept",
+    "do you support",
+    "do you work with",
+    "are you in network",
+    "in network with",
+)
+
+
 INTENT_PHRASES: tuple[tuple[Intent, tuple[str, ...]], ...] = (
     (
         Intent.REFILL_REQUEST,
@@ -78,6 +112,7 @@ INTENT_PHRASES: tuple[tuple[Intent, tuple[str, ...]], ...] = (
             "top up my prescription",
         ),
     ),
+    (Intent.COVERAGE_LOOKUP, PERSONAL_COVERAGE_PHRASES),
     (
         Intent.MEDICATION_LOOKUP,
         (
@@ -421,6 +456,12 @@ class RuleBasedExtractor:
             return Intent.UNKNOWN, 1.0
 
         if not any(word in lowered for word in ("appointment", "book", "refill", "cancel")):
+            # Before the FAQ, because the FAQ's "insurance" alias would
+            # otherwise swallow "what insurance do I have" and answer a
+            # question about the caller's own record with a list of the plans
+            # the clinic accepts.
+            if self._is_personal_coverage(lowered):
+                return Intent.COVERAGE_LOOKUP, 0.9
             if self._faq_topic(lowered) is not None:
                 return Intent.CLINIC_FAQ, 0.9
             # A clinic question we have no answer for. Routed to the FAQ
@@ -499,6 +540,13 @@ class RuleBasedExtractor:
             if head in lowered:
                 return head
         return None
+
+    @staticmethod
+    def _is_personal_coverage(lowered: str) -> bool:
+        """Their cover, not ours."""
+        if any(marker in lowered for marker in CLINIC_DIRECTED_MARKERS):
+            return False
+        return any(phrase in lowered for phrase in PERSONAL_COVERAGE_PHRASES)
 
     @staticmethod
     def _faq_topic(lowered: str) -> str | None:
