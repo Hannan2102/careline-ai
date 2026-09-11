@@ -17,7 +17,12 @@ from datetime import date
 
 import pytest
 
-from app.agents.extraction import RuleBasedExtractor, _spoken_numbers_to_digits
+from app.agents.extraction import (
+    ExtractionContext,
+    RuleBasedExtractor,
+    _spoken_numbers_to_digits,
+)
+from app.workflows.base import AwaitedInput
 
 
 class TestSpokenDates:
@@ -81,3 +86,53 @@ class TestSpokenDates:
         assert _spoken_numbers_to_digits("nineteen seventy") == "1970"
         assert _spoken_numbers_to_digits("two thousand and two") == "2002"
         assert _spoken_numbers_to_digits("two thousand") == "2000"
+
+
+class TestADateIsNotAName:
+    """A spoken date must not be mistaken for the caller's name.
+
+    Found in a live call. The caller said "Linda Nguyen", was asked for a date
+    of birth, said "Thirtieth April nineteen fifty eight" -- and was told the
+    details did not match. Both halves had been understood correctly; the
+    failure was that "Thirtieth April" is two capitalised words, so the
+    bare-name fallback claimed it as a full name, and a name found this turn
+    replaces the one remembered from the last one. The real name was
+    overwritten by fragments of the date, and a valid patient could not be
+    verified at all.
+    """
+
+    @pytest.fixture
+    def asked_for_identity(self) -> ExtractionContext:
+        return ExtractionContext(awaiting=AwaitedInput.IDENTITY)
+
+    @pytest.mark.parametrize(
+        ("spoken", "expected"),
+        [
+            ("Thirtieth April nineteen fifty eight.", date(1958, 4, 30)),
+            ("Fifteenth February nineteen eighty five", date(1985, 2, 15)),
+            ("Twenty First December Two Thousand Two", date(2002, 12, 21)),
+        ],
+    )
+    def test_a_date_alone_yields_a_date_and_no_name(
+        self, asked_for_identity: ExtractionContext, spoken: str, expected: date
+    ) -> None:
+        extracted = RuleBasedExtractor().extract(spoken, asked_for_identity)
+        assert extracted.date_of_birth == expected
+        assert extracted.full_name is None, (
+            f"claimed {extracted.full_name!r} as a name; it would overwrite the real one"
+        )
+
+    @pytest.mark.parametrize(
+        "name",
+        ["Linda Nguyen", "John Smith", "April Smith", "June Carter", "May Thompson"],
+    )
+    def test_a_real_name_still_reads_as_a_name(
+        self, asked_for_identity: ExtractionContext, name: str
+    ) -> None:
+        """Including the ones that are also months.
+
+        Rejecting any candidate containing a month word would lose April, June
+        and May as first names -- which is why every word has to be date
+        vocabulary before the candidate is discarded, not just one.
+        """
+        assert RuleBasedExtractor().extract(name, asked_for_identity).full_name == name

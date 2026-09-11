@@ -430,7 +430,7 @@ class RuleBasedExtractor:
         # When a name is what we asked for, a bare "John Smith" is an answer.
         if context.awaiting is AwaitedInput.IDENTITY:
             candidate = re.match(r"^\s*([A-Z][\w'-]+(?:\s+[A-Z][\w'-]+)+)", text.strip())
-            if candidate:
+            if candidate and not _is_spoken_date(candidate.group(1)):
                 return " ".join(candidate.group(1).split())
         return None
 
@@ -519,6 +519,32 @@ class RuleBasedExtractor:
         if any(re.search(rf"\b{re.escape(word)}\b", stripped) for word in YES_WORDS):
             return True
         return None
+
+
+#: The words that hold a spoken date together but carry no number of their
+#: own. Without "thousand", "Twenty First December Two Thousand Two" is not
+#: all-date-vocabulary and survives as a name.
+_DATE_GLUE = frozenset({"thousand", "hundred", "and", "of", "the", "on", "born"})
+
+
+def _is_spoken_date(candidate: str) -> bool:
+    """Whether a capitalised phrase is really a date being read aloud.
+
+    "Thirtieth April" is two capitalised words, so the bare-name fallback
+    claimed it as a full name -- and because a name found this turn overrides
+    the one remembered from the last one, a caller who gave their name and then
+    their date of birth had the real name replaced by fragments of the date and
+    failed verification. Which is how a working call died: name accepted, date
+    accepted, identity rejected.
+
+    Every word has to be date vocabulary, not just one. April and June are
+    names as well as months, and "April Smith" is a person.
+    """
+    words = candidate.lower().split()
+    return bool(words) and all(
+        word in _MONTH_WORDS or word in _UNITS or word in _TENS or word in _DATE_GLUE
+        for word in words
+    )
 
 
 def _spoken_numbers_to_digits(text: str) -> str:
