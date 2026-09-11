@@ -26,7 +26,13 @@ from app.services.base import UpstreamUnavailableError
 from app.services.escalation_service import EscalationService
 from app.services.medication_service import MedicationLookupStatus, MedicationService
 from app.services.verification_service import SecondFactorType, VerificationService
-from app.workflows.base import AwaitedInput, WorkflowResponse, WorkflowStatus
+from app.workflows.base import (
+    AwaitedInput,
+    WorkflowMemory,
+    WorkflowResponse,
+    WorkflowStatus,
+    begin_request,
+)
 from app.workflows.identity import IdentityCollector, IdentityOutcome
 from app.workflows.medication_common import MedicationMemory
 
@@ -94,13 +100,7 @@ class MedicationLookupWorkflow:
     async def start(self, session: SessionState) -> WorkflowResponse:
         memory = self._memory(session)
         session.active_workflow = self.name
-        if memory.get("state") is None:
-            memory.set(
-                "state",
-                LookupState.COLLECTING_MEDICATION.value
-                if session.is_verified
-                else LookupState.COLLECTING_IDENTITY.value,
-            )
+        self._begin_request(session, memory)
         state = LookupState(memory.get("state"))
         if state is LookupState.COLLECTING_IDENTITY:
             return self._respond(
@@ -118,6 +118,7 @@ class MedicationLookupWorkflow:
     ) -> WorkflowResponse:
         memory = self._memory(session)
         session.active_workflow = self.name
+        self._begin_request(session, memory)
         state = LookupState(memory.get("state", LookupState.COLLECTING_IDENTITY.value))
         moment = now or datetime.now(UTC)
 
@@ -269,6 +270,18 @@ class MedicationLookupWorkflow:
                     "clinical staff and someone will come back to you.",
                     medication_display=lookup.medication.display_name,
                 )
+
+    @staticmethod
+    def _begin_request(session: SessionState, memory: WorkflowMemory) -> None:
+        begin_request(
+            memory,
+            finished=frozenset({LookupState.ANSWERED.value}),
+            fresh=(
+                LookupState.COLLECTING_MEDICATION.value
+                if session.is_verified
+                else LookupState.COLLECTING_IDENTITY.value
+            ),
+        )
 
     # ------------------------------------------------------------- helpers
     def _ask_which_medication(self, session: SessionState) -> WorkflowResponse:

@@ -38,6 +38,7 @@ from app.workflows.base import (
     WorkflowMemory,
     WorkflowResponse,
     WorkflowStatus,
+    begin_request,
 )
 from app.workflows.identity import IdentityCollector, IdentityOutcome
 
@@ -108,13 +109,7 @@ class ExistingPatientBookingWorkflow:
         """Begin (or resume) a booking."""
         memory = self._memory(session)
         session.active_workflow = self.name
-        if memory.get("state") is None:
-            memory.set(
-                "state",
-                BookingState.COLLECTING_REASON.value
-                if session.is_verified
-                else BookingState.COLLECTING_IDENTITY.value,
-            )
+        self._begin_request(session, memory)
         return self._prompt_for_current_state(session)
 
     async def advance(
@@ -123,6 +118,11 @@ class ExistingPatientBookingWorkflow:
         """Move the booking forward by one turn."""
         memory = self._memory(session)
         session.active_workflow = self.name
+        # The orchestrator routes a booking straight here without calling
+        # ``start``, so this is the only place a second booking in one call --
+        # or a first one by a caller some other workflow already verified --
+        # gets a state fit to use.
+        self._begin_request(session, memory)
         state = BookingState(memory.get("state", BookingState.COLLECTING_IDENTITY.value))
         moment = now or datetime.now(UTC)
 
@@ -156,6 +156,18 @@ class ExistingPatientBookingWorkflow:
                 "I'm having trouble reaching our scheduling system. Let me pass you to "
                 "our front desk so they can book this for you.",
             )
+
+    @staticmethod
+    def _begin_request(session: SessionState, memory: WorkflowMemory) -> None:
+        begin_request(
+            memory,
+            finished=frozenset({BookingState.BOOKED.value}),
+            fresh=(
+                BookingState.COLLECTING_REASON.value
+                if session.is_verified
+                else BookingState.COLLECTING_IDENTITY.value
+            ),
+        )
 
     # ----------------------------------------------------------- transitions
     async def _handle_identity(

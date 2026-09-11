@@ -34,7 +34,13 @@ from app.services.base import UpstreamUnavailableError
 from app.services.coverage_service import CoverageService, CoverageStatus
 from app.services.escalation_service import EscalationService
 from app.services.verification_service import SecondFactorType, VerificationService
-from app.workflows.base import AwaitedInput, WorkflowResponse, WorkflowStatus
+from app.workflows.base import (
+    AwaitedInput,
+    WorkflowMemory,
+    WorkflowResponse,
+    WorkflowStatus,
+    begin_request,
+)
 from app.workflows.identity import IdentityCollector, IdentityOutcome
 
 logger = get_logger(__name__)
@@ -79,13 +85,7 @@ class CoverageLookupWorkflow:
     async def start(self, session: SessionState) -> WorkflowResponse:
         memory = self._memory(session)
         session.active_workflow = self.name
-        if memory.get("state") is None:
-            memory.set(
-                "state",
-                CoverageState.ANSWERED.value
-                if session.is_verified
-                else CoverageState.COLLECTING_IDENTITY.value,
-            )
+        self._begin_request(session, memory)
         if CoverageState(memory.get("state")) is CoverageState.COLLECTING_IDENTITY:
             return self._respond(
                 session,
@@ -95,12 +95,16 @@ class CoverageLookupWorkflow:
                 + IdentityCollector.ask().message,
                 awaiting=AwaitedInput.IDENTITY,
             )
+        # Already verified, so there is nothing to ask. Both branches used to
+        # ask anyway -- and because responding writes the state back, this one
+        # reset a verified caller to COLLECTING_IDENTITY, so ``advance`` then
+        # asked for a name and date of birth they had given minutes earlier to
+        # a different workflow.
         return self._respond(
             session,
-            CoverageState.COLLECTING_IDENTITY,
+            CoverageState.ANSWERED,
             WorkflowStatus.AWAITING_INPUT,
-            IdentityCollector.ask().message,
-            awaiting=AwaitedInput.IDENTITY,
+            "Let me check what we have on file for you.",
         )
 
     async def advance(
@@ -108,6 +112,7 @@ class CoverageLookupWorkflow:
     ) -> WorkflowResponse:
         memory = self._memory(session)
         session.active_workflow = self.name
+        self._begin_request(session, memory)
         state = CoverageState(memory.get("state", CoverageState.COLLECTING_IDENTITY.value))
         moment = now or datetime.now(UTC)
 
@@ -248,6 +253,18 @@ class CoverageLookupWorkflow:
             message=message,
             awaiting=awaiting,
             escalation_id=escalation_id,
+        )
+
+    @staticmethod
+    def _begin_request(session: SessionState, memory: WorkflowMemory) -> None:
+        begin_request(
+            memory,
+            finished=frozenset({CoverageState.ANSWERED.value}),
+            fresh=(
+                CoverageState.ANSWERED.value
+                if session.is_verified
+                else CoverageState.COLLECTING_IDENTITY.value
+            ),
         )
 
     def _memory(self, session: SessionState):  # type: ignore[no-untyped-def]

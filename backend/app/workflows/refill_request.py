@@ -27,7 +27,13 @@ from app.services.escalation_service import EscalationService
 from app.services.medication_service import MedicationLookupStatus, MedicationService
 from app.services.refill_service import RefillService
 from app.services.verification_service import SecondFactorType, VerificationService
-from app.workflows.base import AwaitedInput, WorkflowResponse, WorkflowStatus
+from app.workflows.base import (
+    AwaitedInput,
+    WorkflowMemory,
+    WorkflowResponse,
+    WorkflowStatus,
+    begin_request,
+)
 from app.workflows.identity import IdentityCollector, IdentityOutcome
 from app.workflows.medication_common import MedicationMemory
 
@@ -79,13 +85,7 @@ class RefillRequestWorkflow:
     async def start(self, session: SessionState) -> WorkflowResponse:
         memory = self._memory(session)
         session.active_workflow = self.name
-        if memory.get("state") is None:
-            memory.set(
-                "state",
-                RefillState.COLLECTING_MEDICATION.value
-                if session.is_verified
-                else RefillState.COLLECTING_IDENTITY.value,
-            )
+        self._begin_request(session, memory)
         state = RefillState(memory.get("state"))
         if state is RefillState.COLLECTING_IDENTITY:
             return self._respond(
@@ -108,6 +108,7 @@ class RefillRequestWorkflow:
     ) -> WorkflowResponse:
         memory = self._memory(session)
         session.active_workflow = self.name
+        self._begin_request(session, memory)
         state = RefillState(memory.get("state", RefillState.COLLECTING_IDENTITY.value))
         moment = now or datetime.now(UTC)
 
@@ -277,6 +278,18 @@ class RefillRequestWorkflow:
             f"I've sent a refill request for {medication.display_name} to the clinic for "
             "review. You'll hear back once a clinician has looked at it. Is there "
             "anything else?",
+        )
+
+    @staticmethod
+    def _begin_request(session: SessionState, memory: WorkflowMemory) -> None:
+        begin_request(
+            memory,
+            finished=frozenset({RefillState.REQUESTED.value}),
+            fresh=(
+                RefillState.COLLECTING_MEDICATION.value
+                if session.is_verified
+                else RefillState.COLLECTING_IDENTITY.value
+            ),
         )
 
     # ------------------------------------------------------------- helpers

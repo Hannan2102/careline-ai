@@ -37,6 +37,7 @@ from app.workflows.base import (
     WorkflowMemory,
     WorkflowResponse,
     WorkflowStatus,
+    begin_request,
 )
 from app.workflows.identity import IdentityCollector, IdentityOutcome
 
@@ -65,6 +66,17 @@ class ManagementState(StrEnum):
     CANCELLED = "CANCELLED"
     RESCHEDULED = "RESCHEDULED"
     ESCALATED = "ESCALATED"
+
+
+#: States that mean the last thing the caller asked for is done with, so the
+#: next thing they ask for is a new request rather than a continuation.
+FINISHED_STATES = frozenset(
+    {
+        ManagementState.ANSWERED.value,
+        ManagementState.CANCELLED.value,
+        ManagementState.RESCHEDULED.value,
+    }
+)
 
 
 class ManagementInput(BaseModel):
@@ -109,15 +121,9 @@ class AppointmentManagementWorkflow:
     ) -> WorkflowResponse:
         memory = self._memory(session)
         session.active_workflow = self.name
+        self._begin_request(session, memory)
         if action is not None:
             memory.set("action", action.value)
-        if memory.get("state") is None:
-            memory.set(
-                "state",
-                ManagementState.CHOOSING_ACTION.value
-                if session.is_verified
-                else ManagementState.COLLECTING_IDENTITY.value,
-            )
         return self._prompt(session)
 
     async def advance(
@@ -125,6 +131,9 @@ class AppointmentManagementWorkflow:
     ) -> WorkflowResponse:
         memory = self._memory(session)
         session.active_workflow = self.name
+        # Before the state is read: the request this memory belongs to may
+        # already be over, and what follows must act on the new one.
+        self._begin_request(session, memory)
         state = ManagementState(memory.get("state", ManagementState.COLLECTING_IDENTITY.value))
         moment = now or datetime.now(UTC)
         if turn.action is not None:
@@ -621,6 +630,18 @@ class AppointmentManagementWorkflow:
             WorkflowStatus.ESCALATED,
             message,
             escalation_id=escalation.escalation_id,
+        )
+
+    @staticmethod
+    def _begin_request(session: SessionState, memory: WorkflowMemory) -> None:
+        begin_request(
+            memory,
+            finished=FINISHED_STATES,
+            fresh=(
+                ManagementState.CHOOSING_ACTION.value
+                if session.is_verified
+                else ManagementState.COLLECTING_IDENTITY.value
+            ),
         )
 
     def _prompt(self, session: SessionState) -> WorkflowResponse:

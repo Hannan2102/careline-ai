@@ -118,3 +118,40 @@ class WorkflowMemory:
     def clear(self) -> None:
         for key in [k for k in self._store if k.startswith(f"{self._namespace}.")]:
             del self._store[key]
+
+
+def begin_request(memory: WorkflowMemory, *, finished: frozenset[str], fresh: str) -> None:
+    """Put a workflow's memory in a fit state to take a *new* request.
+
+    Workflows are entered twice over: the orchestrator starts one when an
+    intent names it, and continues the one already running. Neither path used
+    to consider that the memory it finds might belong to a request that is
+    already over, and both ways of getting that wrong stranded a caller:
+
+    * **A finished request never restarted.** The state was still ANSWERED or
+      BOOKED from last time, so the workflow declined to re-initialise and fell
+      through to its own catch-all prompt -- which, in the appointment
+      workflow, is "What would you like to do with your appointment?". Worse,
+      starting it marked the workflow active again, so every subsequent turn
+      was routed back into the same dead state. Observed live: a caller booked
+      an appointment, checked it, then asked to move it, and got that same
+      sentence six times in a row whatever they said.
+    * **A first request assumed nothing was known.** With no state at all the
+      workflow started at COLLECTING_IDENTITY and asked for a name and date of
+      birth the caller had already given to a different workflow a minute
+      earlier.
+
+    Clearing rather than only resetting the state is the point of the first
+    case: a cached list of appointments outlives the request that fetched it,
+    and acting on a stale one after a cancellation would act on an appointment
+    that no longer exists.
+
+    ``finished`` deliberately excludes ESCALATED. That call is on its way to a
+    person, and quietly starting over would take it back off them.
+    """
+    state = memory.get("state")
+    if state is None:
+        memory.set("state", fresh)
+    elif state in finished:
+        memory.clear()
+        memory.set("state", fresh)
