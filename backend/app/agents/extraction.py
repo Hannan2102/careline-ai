@@ -43,6 +43,20 @@ class ExtractedTurn:
     confirm: bool | None = None
     none_suitable: bool = False
     list_all: bool = False
+    #: A real request that this agent has no way to serve.
+    #:
+    #: Distinct from UNKNOWN, which means "I could not tell what that was".
+    #: This one means the caller was understood perfectly and the answer is
+    #: that we do not do it -- a complaint, a test result, a referral chased.
+    #: The rules never set it: recognising the limits of the system is exactly
+    #: the judgement a phrase table cannot make, so it comes from the model.
+    out_of_scope: bool = False
+    #: The caller has left the agent's question and asked for something else.
+    #:
+    #: Never set by the rules. Telling "actually, sort out my repeat while I'm
+    #: on" from a clumsy answer to the question just asked is comprehension,
+    #: and acting on it wrongly throws away a booking half made.
+    changes_subject: bool = False
     entities: dict[str, str] = field(default_factory=dict)
 
 
@@ -399,6 +413,12 @@ YES_WORDS = frozenset(
         "okay",
         "please",
         "go ahead",
+        "go on",
+        "please do",
+        "that's fine",
+        "that is fine",
+        "alright",
+        "all right",
         "that works",
         "sounds good",
         "correct",
@@ -418,6 +438,8 @@ NO_WORDS = frozenset(
         "do not",
         "cancel that",
         "never mind",
+        "leave it",
+        "forget it",
         "hold on",
         "wait",
     }
@@ -462,6 +484,16 @@ ORDINAL_WORDS: dict[str, int] = {
     "three": 3,
     "last": -1,
 }
+
+#: The words above that are ordinary numbers rather than positions. "Second"
+#: can only be a choice; "two" is a choice, a dose, a year and a pronoun.
+CARDINALS = frozenset({"one", "two", "three"})
+
+#: Words that can sit in front of a spoken number without making it a pronoun.
+_POSITION_LEAD_IN = frozenset({"number", "option", "choice", "the", "just", "make", "it"})
+
+#: And words that can follow one without qualifying it into a pronoun.
+_POSITION_TAIL = frozenset({"please", "thanks", "thank", "you", "then", "ok", "okay"})
 
 #: Leftmost-longest match over the words above.
 #:
@@ -670,7 +702,7 @@ class RuleBasedExtractor:
             full_name=self._name(text, context),
             date_of_birth=self._date_of_birth(text),
             second_factor_value=self._second_factor(lowered, context),
-            reason=self._reason(text, intent),
+            reason=self._reason(text, intent, context),
             practitioner_name=self._practitioner(lowered),
             medication_name=self._medication(lowered, context),
             faq_topic=self._faq_topic(lowered),
@@ -832,7 +864,14 @@ class RuleBasedExtractor:
         return digits[-4:] if len(digits) >= 4 else None
 
     @staticmethod
-    def _reason(text: str, intent: Intent) -> str | None:
+    def _reason(text: str, intent: Intent, context: ExtractionContext) -> str | None:
+        # When the agent has just asked what the visit is for, the answer is
+        # the reason, whatever intent the turn scores as. Mid-workflow turns
+        # are UNKNOWN by design, so requiring BOOK_APPOINTMENT here meant "my
+        # knee has been hurting" was not a reason -- and the workflow asked
+        # the same question again, and again.
+        if context.awaiting is AwaitedInput.REASON:
+            return text or None
         if intent is not Intent.BOOK_APPOINTMENT:
             return None
         # The whole utterance is the reason; classify_reason narrows it to a
@@ -901,6 +940,16 @@ class RuleBasedExtractor:
 
         match = _ORDINAL_PATTERN.search(lowered)
         if match:
+            if match.group(1) in CARDINALS and not _reads_as_a_position(
+                lowered, match.start(), match.end()
+            ):
+                # "One" is a number in "number one" and a pronoun in "the
+                # Tuesday one", "the one after that", "the early one". Reading
+                # the pronoun as the number picks the first of whatever was
+                # offered -- confidently, and with no relation to what was
+                # asked for. Nothing is guessed instead: the turn goes to the
+                # model, and failing that the agent asks again.
+                return None
             index = ORDINAL_WORDS[match.group(1)]
             if index == -1:
                 return len(context.offers) or None
@@ -921,6 +970,25 @@ class RuleBasedExtractor:
 #: own. Without "thousand", "Twenty First December Two Thousand Two" is not
 #: all-date-vocabulary and survives as a name.
 _DATE_GLUE = frozenset({"thousand", "hundred", "and", "of", "the", "on", "born"})
+
+
+def _reads_as_a_position(lowered: str, start: int, end: int) -> bool:
+    """Whether a plain number is a choice from a list or a pronoun.
+
+    A choice stands alone: "two, please", "number two", "the one". A pronoun
+    is qualified by something, and the qualifier is what does the choosing --
+    "the *Tuesday* one", "the one *after that*", "the *early* one". So the
+    test is whether anything either side is doing work.
+
+    Getting this wrong the other way is the expensive direction: every one of
+    those pronoun phrasings resolved to the first thing on the list, which for
+    "the Tuesday one" meant offering to cancel a Wednesday appointment.
+    """
+    before = re.findall(r"[a-z']+", lowered[:start])
+    after = re.findall(r"[a-z']+", lowered[end:])
+    leads = not before or before[-1] in _POSITION_LEAD_IN
+    trails = all(word in _POSITION_TAIL for word in after)
+    return leads and trails
 
 
 def _without_leading_ordinal(candidate: str) -> str:

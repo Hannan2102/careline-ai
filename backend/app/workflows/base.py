@@ -45,6 +45,19 @@ class AwaitedInput(StrEnum):
     CONFIRMATION = "confirmation"
 
 
+class Offer(StrEnum):
+    """Something the agent has offered to do, pending a yes or no.
+
+    A question with no memory behind it is worse than no question: the agent
+    asked "would you like to book one?", the caller said "yes please", and the
+    turn reached the capability menu because the workflow had already closed
+    itself. Naming the offer is what lets the next turn act on it.
+    """
+
+    BOOK_APPOINTMENT = "book_appointment"
+    HUMAN = "human"
+
+
 class SlotOffer(BaseModel):
     """One appointment time offered to the patient.
 
@@ -82,6 +95,10 @@ class WorkflowResponse(BaseModel):
     #: the fallback when there is no model, which is what makes text mode free.
     message: str
     awaiting: AwaitedInput | None = None
+    #: A yes-or-no the agent has just put to the caller, for the orchestrator
+    #: to honour on the next turn. Distinct from ``awaiting``, which keeps a
+    #: workflow open; an offer is made by a workflow that has finished.
+    offer: Offer | None = None
     offers: tuple[SlotOffer, ...] = ()
     appointment: Appointment | None = None
     escalation_id: str | None = None

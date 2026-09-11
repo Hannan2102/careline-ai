@@ -40,12 +40,17 @@ from app.agents.extraction import ExtractedTurn, ExtractionContext, TurnExtracto
 from app.agents.intents import Intent
 from app.ai.providers.base import ChatMessage, LLMProvider, LLMRequest, ProviderUnavailableError
 from app.observability.logging import get_logger
+from app.workflows.base import AwaitedInput
 
 logger = get_logger(__name__)
 
 #: Long enough for the JSON object below, short enough that a model which
 #: starts narrating is cut off rather than paid for.
 MAX_OUTPUT_TOKENS = 200
+
+#: Lists read to a caller are three or four long; they have to be, because
+#: nobody holds ten options in their head over the phone.
+MAX_PLAUSIBLE_POSITION = 5
 
 #: Classification is not a creative task.
 TEMPERATURE = 0.0
@@ -65,9 +70,18 @@ TIMEOUT_SECONDS = 3.0
 SYSTEM_PROMPT = f"""\
 Classify what a caller to a medical clinic wants. Reply with ONLY a JSON object:
 {{"intent":..,"confidence":0-1,"full_name":..,"date_of_birth":..,
-"medication_name":..,"faq_topic":..,"confirm":..,"list_all":..,"none_suitable":..}}
+"medication_name":..,"faq_topic":..,"confirm":..,"list_all":..,"none_suitable":..,
+"ordinal":..,"out_of_scope":..,"changes_subject":..}}
 Use null for anything not said. Never invent a name, date or drug.
 A date is an ISO calendar date and nothing else.
+ordinal: which of a numbered list they chose, counting from 1. Any way of
+picking one counts: by position, by day, by time of day, by clinician.
+none_suitable: they turned down everything offered, however they said it.
+confirm: true for yes, false for no.
+out_of_scope: a real request this line cannot serve -- a complaint, test
+results, a referral chased, anything for a clinician to answer.
+changes_subject: true only if the caller has dropped the agent's question and
+asked for something different. Answering it, badly or partly, is not that.
 
 intent: {", ".join(i.value for i in Intent)}
 
@@ -81,6 +95,51 @@ Whose thing it is decides the intent:
 
 If they are answering the agent's last question, classify by what it answered.
 Unsure -> unknown, low confidence. A wrong intent is worse than none."""
+
+
+#: What the agent had just asked, in words the model can use. Named only --
+#: never the options themselves, which for appointments and prescriptions are
+#: the patient's record.
+_QUESTION_ASKED: dict[AwaitedInput, str] = {
+    AwaitedInput.IDENTITY: "for the caller's full name and date of birth",
+    AwaitedInput.SECOND_FACTOR: "for the last four digits of their phone number",
+    AwaitedInput.REASON: "what the appointment is for",
+    AwaitedInput.SLOT_CHOICE: "which of the appointment times it offered they would like",
+    AwaitedInput.MEDICATION_CHOICE: "which of their medications they meant",
+    AwaitedInput.CONFIRMATION: "whether to go ahead",
+}
+
+
+def _rules_answered(awaiting: AwaitedInput, baseline: ExtractedTurn) -> bool:
+    """Whether the rules already got what the outstanding question needed.
+
+    Per question, because "answered" means something different for each: a
+    name or a date of birth for identity, a choice or a refusal for a list of
+    times. Anything not listed is treated as answered, so a new kind of
+    question cannot silently start a model call on every turn.
+    """
+    match awaiting:
+        case AwaitedInput.IDENTITY:
+            return baseline.full_name is not None or baseline.date_of_birth is not None
+        case AwaitedInput.SECOND_FACTOR:
+            return baseline.second_factor_value is not None
+        case AwaitedInput.SLOT_CHOICE:
+            return (
+                baseline.ordinal is not None
+                or baseline.none_suitable
+                or baseline.confirm is not None
+            )
+        case AwaitedInput.MEDICATION_CHOICE:
+            return (
+                baseline.medication_name is not None
+                or baseline.ordinal is not None
+                or baseline.list_all
+                or baseline.confirm is not None
+            )
+        case AwaitedInput.CONFIRMATION:
+            return baseline.confirm is not None
+        case _:
+            return True
 
 
 class _Classification(BaseModel):
@@ -100,12 +159,26 @@ class _Classification(BaseModel):
     medication_name: str | None = None
     faq_topic: str | None = None
     confirm: bool | None = None
+    ordinal: int | None = None
     # Optional, not defaulted-false: a model asked for a key it has no opinion
     # about returns `null`, and a schema that refuses null threw away the whole
     # classification over a field nobody had asked about. Measured against Groq
     # this rejected every single reply.
     list_all: bool | None = None
     none_suitable: bool | None = None
+    out_of_scope: bool | None = None
+    changes_subject: bool | None = None
+
+    def position(self) -> int | None:
+        """The chosen position, if it could be one.
+
+        Anything outside a short list is a number the model found somewhere in
+        the sentence rather than a choice -- a year, a house number, a dose.
+        Dropping it costs a re-ask; keeping it acts on the wrong option.
+        """
+        if self.ordinal is None or not 1 <= self.ordinal <= MAX_PLAUSIBLE_POSITION:
+            return None
+        return self.ordinal
 
     @field_validator("date_of_birth", mode="before")
     @classmethod
@@ -160,16 +233,26 @@ class LLMExtractor:
     # ------------------------------------------------------------ when to ask
     @staticmethod
     def _worth_asking(utterance: str, context: ExtractionContext, baseline: ExtractedTurn) -> bool:
-        """Whether a model call would tell us anything.
+        """Whether a model call would tell us anything we do not already have.
 
-        Skipped mid-workflow. When the agent has just asked for a date of birth
-        the turn is an answer to that question, the rules parse the answer, and
-        a model round trip would add latency to every single identity step for
-        nothing. This is also what keeps the cost of a call roughly flat.
+        Mid-conversation the test is whether the rules answered the question
+        the agent asked. When they did -- "the second one", "yes", a date of
+        birth read off a card -- there is nothing to add, and a round trip
+        would put 400 ms into the most latency-sensitive turns in the call for
+        a result already in hand.
+
+        When they did not, the turn is otherwise lost: the agent is about to
+        ask the same question a second time, which is the moment a caller
+        decides this was a waste of their afternoon. Latency has stopped
+        competing with a good answer, so the model gets its go. That is the
+        same "rules are the floor" bargain the rest of this module makes,
+        extended to the half of the conversation it used to sit out.
         """
-        if context.awaiting is not None:
+        if len(utterance.strip()) <= 2:
             return False
-        return len(utterance.strip()) > 2
+        if context.awaiting is None:
+            return True
+        return not _rules_answered(context.awaiting, baseline)
 
     # -------------------------------------------------------------- the call
     async def _classify(
@@ -178,7 +261,7 @@ class LLMExtractor:
         request = LLMRequest(
             messages=[
                 ChatMessage(role="system", content=SYSTEM_PROMPT),
-                ChatMessage(role="user", content=utterance),
+                ChatMessage(role="user", content=self._question_and_answer(utterance, context)),
             ],
             max_output_tokens=MAX_OUTPUT_TOKENS,
             temperature=TEMPERATURE,
@@ -196,6 +279,31 @@ class LLMExtractor:
             return None
 
         return self._parse(response.text)
+
+    @staticmethod
+    def _question_and_answer(utterance: str, context: ExtractionContext) -> str:
+        """The caller's words, and what they were answering.
+
+        A bare "the one in the morning" is unclassifiable alone and obvious
+        against the question it answers.
+
+        Appointment times the clinic has free go with it, because that is what
+        makes "the one in the morning", "whichever is soonest" and "the one
+        with Dr Chen" answerable at all -- and because an empty slot in a
+        diary is not information about a patient. Nothing else does: which
+        appointments this caller has and what is on their prescription are
+        their record, and the record does not leave this process (ADR 005).
+        The question is named; its answers are not.
+        """
+        asked = _QUESTION_ASKED.get(context.awaiting) if context.awaiting else None
+        if asked is None:
+            return utterance
+        lines = [f"The agent asked {asked}."]
+        if context.awaiting is AwaitedInput.SLOT_CHOICE and context.offers:
+            listed = "; ".join(f"{offer.index}) {offer.label}" for offer in context.offers)
+            lines.append(f"The times, in order: {listed}.")
+        lines.append(f'The caller replied: "{utterance}"')
+        return " ".join(lines)
 
     @staticmethod
     def _parse(text: str) -> _Classification | None:
@@ -253,9 +361,22 @@ class LLMExtractor:
             medication_name=baseline.medication_name or seen.medication_name,
             faq_topic=baseline.faq_topic
             or (seen.faq_topic if intent is Intent.CLINIC_FAQ else None),
-            ordinal=baseline.ordinal,
+            # A position the rules could not find. They resolve "the second
+            # one" and a named day against the list actually offered, which is
+            # the reliable half of this and stays theirs; what the model adds
+            # is the half a table cannot hold -- "the one after that", "the
+            # earliest you said". Only ever when the rules found nothing, and
+            # only a plausible position: a hallucinated 7 against three
+            # options books the wrong thing rather than asking.
+            ordinal=baseline.ordinal if baseline.ordinal is not None else seen.position(),
             confirm=baseline.confirm if baseline.confirm is not None else seen.confirm,
             none_suitable=baseline.none_suitable or bool(seen.none_suitable),
+            out_of_scope=bool(seen.out_of_scope),
+            # Only the model may say this, and only about an intent it also
+            # supplied: it is the one judgement here that abandons work in
+            # progress, and the rules cannot tell "actually, do my refill
+            # instead" from a clumsy answer to the question just asked.
+            changes_subject=bool(seen.changes_subject) and intent is not Intent.UNKNOWN,
             # Only when nothing was named. "Tell me how much metformin I should
             # take" is a question about one drug, and a model that also sets
             # list_all turns it into a recital of the whole record -- which is

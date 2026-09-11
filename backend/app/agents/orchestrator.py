@@ -13,6 +13,7 @@ Text and voice share this object (ADR 005). Voice adds STT before
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict
@@ -30,7 +31,7 @@ from app.ai.usage import UsageLedger
 from app.config.settings import Settings, get_settings
 from app.observability.logging import bind_trace, clear_trace, get_logger
 from app.safety.models import SafetyOutcome
-from app.schemas.domain import EscalationCategory
+from app.schemas.domain import AuditAction, EscalationCategory
 from app.services.audit_service import AuditService
 from app.services.base import NotVerifiedError
 from app.services.coverage_service import CoverageService
@@ -46,7 +47,13 @@ from app.workflows.appointment_management import (
     ManagementAction,
     ManagementInput,
 )
-from app.workflows.base import AwaitedInput, SlotOffer, WorkflowResponse
+from app.workflows.base import (
+    AwaitedInput,
+    Offer,
+    SlotOffer,
+    WorkflowMemory,
+    WorkflowResponse,
+)
 from app.workflows.clinic_faq import ClinicFaqInput, ClinicFaqWorkflow
 from app.workflows.coverage_lookup import CoverageLookupInput, CoverageLookupWorkflow
 from app.workflows.existing_patient_booking import (
@@ -57,6 +64,82 @@ from app.workflows.medication_lookup import MedicationLookupInput, MedicationLoo
 from app.workflows.refill_request import RefillRequestInput, RefillRequestWorkflow
 
 logger = get_logger(__name__)
+
+
+def _carried_something(extracted: ExtractedTurn) -> bool:
+    """Whether the turn yielded anything the agent recognised."""
+    return any(
+        (
+            extracted.full_name,
+            extracted.date_of_birth,
+            extracted.second_factor_value,
+            extracted.medication_name,
+            extracted.practitioner_name,
+            extracted.faq_topic,
+            extracted.ordinal,
+            extracted.confirm is not None,
+        )
+    )
+
+
+@dataclass(frozen=True)
+class _Direct:
+    """A reply from the orchestrator itself, with no workflow behind it."""
+
+    message: str
+    escalation_id: str | None = None
+
+
+#: Where a pending yes-or-no is kept between turns.
+PENDING_OFFER = "_offer"
+
+#: Said when the request is a real one the agent has no way to serve.
+#:
+#: Not the capability menu. Reading the menu to somebody who has just asked
+#: for something specific answers a question they did not ask and leaves them
+#: with nowhere to go; the honest reply is that this is not something the
+#: agent can do, followed by the thing it can always do.
+OUT_OF_SCOPE_MESSAGE = (
+    "That isn't something I'm able to help with myself. "
+    "I can pass you to a member of our staff who can — would you like me to?"
+)
+
+DECLINED_MESSAGE = "No problem. Is there anything else I can help with?"
+
+HANDOVER_MESSAGE = (
+    "Of course — I'll pass you to a member of our staff. I've made a note of what "
+    "we've discussed so you won't need to start over."
+)
+
+#: What to say when the agent has asked the same thing twice and got nowhere.
+#:
+#: Honest about whose problem it is. A caller who has now heard one question
+#: three times knows perfectly well that something is wrong, and a fourth
+#: identical sentence is the point at which a real person hangs up.
+STUCK_MESSAGE = (
+    "I'm sorry — I don't seem to be getting this right. "
+    "Would you like me to pass you to a member of our staff?"
+)
+
+#: How many times in a row the agent may say the same sentence.
+#:
+#: Twice. Once is a re-ask, which is normal and often works; a third is a
+#: loop, whatever caused it. This is deliberately a property of the reply
+#: rather than of any workflow, so it catches the loops nobody has found yet.
+MAX_IDENTICAL_REPLIES = 2
+
+#: Where the last reply and its repeat count are kept.
+LAST_REPLY = "_last_reply"
+REPLY_REPEATS = "_reply_repeats"
+
+#: How many turns the agent may fail to understand before offering a person.
+#:
+#: Two, because the first is often a greeting or a false start and the menu is
+#: a fair answer to those. A third recital of the same list is not.
+REPEATS_BEFORE_OFFERING_A_PERSON = 2
+
+#: Where the count of consecutive turns nothing could answer is kept.
+UNKNOWN_STREAK = "_unknown_streak"
 
 FALLBACK_MESSAGE = (
     "I can help with booking, changing or checking an appointment, what your "
@@ -182,10 +265,10 @@ class Orchestrator:
 
             # 3. Route and execute.
             workflow_started = time.perf_counter()
-            response = await self._route(session, extracted, context, utterance, moment)
+            response, direct = await self._answer(session, extracted, context, utterance, moment)
             workflow_ms = (time.perf_counter() - workflow_started) * 1000
 
-            message = response.message if response else FALLBACK_MESSAGE
+            message = self._break_a_loop(session, response.message if response else direct.message)
             return await self._record(
                 session,
                 turn_number,
@@ -194,7 +277,7 @@ class Orchestrator:
                 evaluation,
                 extracted,
                 response=response,
-                escalation_id=response.escalation_id if response else None,
+                escalation_id=(response.escalation_id if response else direct.escalation_id),
                 audit_mark=audit_mark,
                 timings=StageTimings(
                     safety_ms=safety_ms,
@@ -208,6 +291,144 @@ class Orchestrator:
             clear_trace()
 
     # -------------------------------------------------------------- routing
+    async def _answer(
+        self,
+        session: SessionState,
+        extracted: ExtractedTurn,
+        context: ExtractionContext,
+        utterance: str,
+        now: datetime,
+    ) -> tuple[WorkflowResponse | None, _Direct]:
+        """The reply, from a workflow or from the orchestrator itself.
+
+        Three things can answer a turn. A workflow in progress or one the
+        intent names; a yes or no to something the agent offered last turn;
+        and -- when nothing else can -- the orchestrator, which says so and
+        offers a person rather than reciting the menu at somebody for the
+        second time.
+        """
+        answered = await self._answer_an_offer(session, extracted, utterance, now)
+        if answered is not None:
+            return answered
+
+        response = await self._route(session, extracted, context, utterance, now)
+        if response is not None:
+            session.workflow_state.pop(UNKNOWN_STREAK, None)
+            return response, _Direct(FALLBACK_MESSAGE)
+        return None, self._nothing_matched(session, extracted)
+
+    async def _answer_an_offer(
+        self,
+        session: SessionState,
+        extracted: ExtractedTurn,
+        utterance: str,
+        now: datetime,
+    ) -> tuple[WorkflowResponse | None, _Direct] | None:
+        """Honour a yes or no to what the agent offered on the last turn.
+
+        ``None`` when there is nothing outstanding, or when the caller
+        answered with something other than yes or no -- which is not a
+        refusal, it is a change of subject, and the turn belongs to whatever
+        they actually said.
+        """
+        pending = session.workflow_state.pop(PENDING_OFFER, None)
+        if not isinstance(pending, str) or extracted.confirm is None:
+            return None
+
+        offer = Offer(pending)
+        if extracted.confirm is False:
+            return None, _Direct(DECLINED_MESSAGE)
+
+        if offer is Offer.BOOK_APPOINTMENT:
+            return (
+                await self.booking.advance(
+                    session, self._booking_input(extracted, utterance), now=now
+                ),
+                _Direct(FALLBACK_MESSAGE),
+            )
+        return None, self._hand_over(session, utterance)
+
+    def _break_a_loop(self, session: SessionState, message: str) -> str:
+        """Offer a person rather than say the same sentence a third time.
+
+        The last line of defence, and the only one that does not need to know
+        why. Every loop found on a live call so far -- a workflow left in a
+        finished state, a choice nothing could resolve, a question whose
+        answer the rules could not parse -- looked identical from the caller's
+        side: the same sentence, again. So this watches the sentences.
+
+        It does not end the workflow. The caller may still answer the question
+        on the next turn, or say no and carry on; what changes is that a way
+        out has been offered.
+        """
+        last = session.workflow_state.get(LAST_REPLY)
+        seen = session.workflow_state.get(REPLY_REPEATS, 0)
+        repeats = (seen if isinstance(seen, int) else 0) + 1 if message == last else 1
+        session.workflow_state[LAST_REPLY] = message
+        session.workflow_state[REPLY_REPEATS] = repeats
+
+        if repeats <= MAX_IDENTICAL_REPLIES:
+            return message
+
+        logger.warning(
+            "conversation_stuck",
+            session_id=session.session_id,
+            repeated=repeats,
+            workflow=session.active_workflow,
+        )
+        session.workflow_state[PENDING_OFFER] = Offer.HUMAN.value
+        session.workflow_state[REPLY_REPEATS] = 0
+        session.workflow_state[LAST_REPLY] = STUCK_MESSAGE
+        return STUCK_MESSAGE
+
+    def _nothing_matched(self, session: SessionState, extracted: ExtractedTurn) -> _Direct:
+        """What to say when no workflow claimed the turn.
+
+        The menu is a reasonable first answer to "hello?" and a poor second
+        answer to anything. A caller who has asked twice for something we do
+        not do is not going to be helped by hearing the list again, and a
+        request the classifier recognised as out of scope never needed the
+        list at all -- both get offered a person, which is the one thing that
+        is always true.
+        """
+        seen = session.workflow_state.get(UNKNOWN_STREAK, 0)
+        # A turn we got something out of is not a turn we failed to
+        # understand. "John Smith, born the fifteenth of February" reaches
+        # here when no workflow is waiting for it -- understood perfectly,
+        # merely unexpected -- and telling that caller we cannot help them is
+        # both wrong and alarming. It counts as progress, not a strike.
+        if _carried_something(extracted):
+            session.workflow_state.pop(UNKNOWN_STREAK, None)
+            return _Direct(FALLBACK_MESSAGE)
+
+        streak = (seen if isinstance(seen, int) else 0) + 1
+        session.workflow_state[UNKNOWN_STREAK] = streak
+        if extracted.out_of_scope or streak >= REPEATS_BEFORE_OFFERING_A_PERSON:
+            session.workflow_state[PENDING_OFFER] = Offer.HUMAN.value
+            return _Direct(OUT_OF_SCOPE_MESSAGE)
+        return _Direct(FALLBACK_MESSAGE)
+
+    def _hand_over(self, session: SessionState, utterance: str) -> _Direct:
+        """Escalate at the caller's word, once they have said yes to it."""
+        escalation = self.escalations.create(
+            category=EscalationCategory.ADMINISTRATIVE,
+            summary="Request outside what the agent can do; caller accepted a handover.",
+            session_id=session.session_id,
+            patient_ref=session.patient_ref,
+            verification_state=session.verification,
+            patient_question=utterance or None,
+            ai_action="Offered a member of staff, which the caller accepted",
+        )
+        self.audit.record(
+            AuditAction.ESCALATION_CREATED,
+            session_id=session.session_id,
+            patient_ref=session.patient_ref,
+            resource_type="Escalation",
+            resource_id=escalation.escalation_id,
+        )
+        session.workflow_state.pop(UNKNOWN_STREAK, None)
+        return _Direct(HANDOVER_MESSAGE, escalation_id=escalation.escalation_id)
+
     async def _route(
         self,
         session: SessionState,
@@ -218,7 +439,7 @@ class Orchestrator:
     ) -> WorkflowResponse | None:
         """Continue the workflow in progress, or start the one the intent names."""
         active = session.active_workflow
-        if active is not None:
+        if active is not None and not self._changed_subject(session, extracted, active):
             return await self._continue(session, active, extracted, utterance, now)
 
         match extracted.intent:
@@ -254,6 +475,59 @@ class Orchestrator:
                 return await self.faq.advance(
                     session, ClinicFaqInput(utterance=utterance, topic=extracted.faq_topic)
                 )
+            case _:
+                return None
+
+    def _changed_subject(
+        self, session: SessionState, extracted: ExtractedTurn, active: str
+    ) -> bool:
+        """Whether to put down what we were doing and pick up something else.
+
+        Callers do this constantly -- "actually, could you sort out my repeat
+        while I'm on?" -- and a workflow that owns every turn until it finishes
+        answers that with the question it asked before, forever.
+
+        Deliberately narrow. It requires the model to have said the caller
+        moved on *and* to have named a different workflow: the rules cannot
+        reach this, because telling a change of subject from a clumsy answer
+        is exactly the judgement they are bad at, and being wrong here throws
+        away a booking that was half made.
+
+        What is abandoned is abandoned cleanly. The old workflow's memory goes
+        with it, so coming back to it later starts a fresh request rather than
+        resuming against times that were offered several minutes ago.
+        """
+        if not extracted.changes_subject:
+            return False
+        wanted = self._workflow_for(extracted.intent)
+        if wanted is None or wanted == active:
+            return False
+        logger.info(
+            "subject_changed", session_id=session.session_id, from_workflow=active, to=wanted
+        )
+        WorkflowMemory(session.workflow_state, active).clear()
+        session.active_workflow = None
+        return True
+
+    def _workflow_for(self, intent: Intent) -> str | None:
+        """The workflow an intent would start, if any."""
+        match intent:
+            case Intent.BOOK_APPOINTMENT:
+                return self.booking.name
+            case (
+                Intent.LOOKUP_APPOINTMENT
+                | Intent.CANCEL_APPOINTMENT
+                | Intent.RESCHEDULE_APPOINTMENT
+            ):
+                return self.management.name
+            case Intent.MEDICATION_LOOKUP:
+                return self.lookup.name
+            case Intent.COVERAGE_LOOKUP:
+                return self.coverage.name
+            case Intent.REFILL_REQUEST:
+                return self.refill.name
+            case Intent.CLINIC_FAQ:
+                return self.faq.name
             case _:
                 return None
 
@@ -403,6 +677,12 @@ class Orchestrator:
             session.workflow_state["_awaiting"] = response.awaiting.value
         else:
             session.workflow_state.pop("_awaiting", None)
+
+        # And remember any yes-or-no the agent has just put to the caller. A
+        # workflow that offers to book and then closes cannot hear "yes
+        # please" itself; this is what lets the next turn act on it.
+        if response is not None and response.offer is not None:
+            session.workflow_state[PENDING_OFFER] = response.offer.value
 
         operations = tuple(self.audit.store.all()[audit_mark:])
         trace = TurnTrace(

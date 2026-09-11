@@ -38,6 +38,7 @@ from app.utils.formatting import (
 )
 from app.workflows.base import (
     AwaitedInput,
+    Offer,
     SlotOffer,
     WorkflowMemory,
     WorkflowResponse,
@@ -230,6 +231,7 @@ class AppointmentManagementWorkflow:
                 ManagementState.ANSWERED,
                 WorkflowStatus.COMPLETED,
                 "I don't see any upcoming appointments for you. Would you like to book one?",
+                offer=Offer.BOOK_APPOINTMENT,
             )
 
         if len(appointments) > 1 and turn.appointment_choice is None:
@@ -367,6 +369,7 @@ class AppointmentManagementWorkflow:
             WorkflowStatus.COMPLETED,
             f"That's cancelled — {format_day(appointment.start)} at "
             f"{format_time(appointment.start)}. Would you like to rebook now?",
+            offer=Offer.BOOK_APPOINTMENT,
             appointment=cancelled,
         )
 
@@ -711,6 +714,7 @@ class AppointmentManagementWorkflow:
         status: WorkflowStatus,
         message: str,
         awaiting: AwaitedInput | None = None,
+        offer: Offer | None = None,
         offers: tuple[SlotOffer, ...] = (),
         appointment: Appointment | None = None,
         escalation_id: str | None = None,
@@ -722,6 +726,7 @@ class AppointmentManagementWorkflow:
             status=status,
             message=message,
             awaiting=awaiting,
+            offer=offer,
             offers=offers,
             appointment=appointment,
             escalation_id=escalation_id,
