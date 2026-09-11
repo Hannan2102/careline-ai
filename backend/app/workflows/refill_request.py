@@ -194,16 +194,34 @@ class RefillRequestWorkflow:
             )
 
         if lookup.status is MedicationLookupStatus.NOT_FOUND:
-            # No active prescription means there is nothing to refill. Do not
-            # create a request against a prescription that does not exist.
+            # No active prescription means there is nothing to refill, and a
+            # request is never created against one that does not exist. But
+            # not finding it is usually not finding the *word*: callers
+            # describe their medicines -- "the one for my sugar" -- and a
+            # description is not a drug name however confidently it arrives.
+            # So the record is read back and the question asked again, which
+            # is what a receptionist would do. Escalating instead sent a
+            # caller to the front desk over a turn of phrase, having first
+            # told them there was no prescription for "sugar".
+            active = await self.medications.list_active(patient_ref)
+            if active:
+                memory.set("medication_name", None)
+                names = ", ".join(m.display_name for m in active)
+                return self._respond(
+                    session,
+                    RefillState.COLLECTING_MEDICATION,
+                    WorkflowStatus.AWAITING_INPUT,
+                    f"I can't see {medication_name} on your record. "
+                    f"It shows {names}. Which would you like refilled?",
+                    awaiting=AwaitedInput.MEDICATION_CHOICE,
+                )
             return self._escalate(
                 session,
                 turn,
-                f"Refill requested for {medication_name!r}, which is not an active "
-                "prescription on this patient's record.",
-                f"I can't find an active prescription for {medication_name} on your "
-                "record, so I can't send a refill request for it. Let me pass you to our "
-                "staff to look into it.",
+                f"Refill requested for {medication_name!r}, and the record holds no "
+                "active prescriptions at all.",
+                "I can't see any active prescriptions on your record, so I can't send "
+                "a refill request. Let me pass you to our staff to look into it.",
             )
 
         # FOUND or NO_DOSAGE_ON_FILE: the prescription is active either way, and

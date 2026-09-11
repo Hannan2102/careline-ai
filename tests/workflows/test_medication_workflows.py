@@ -329,13 +329,23 @@ class TestRefillRequests:
         assert "already a refill request" in result.message
         assert len(refills.store.for_patient(JOHN_SMITH)) == 1
 
-    async def test_no_active_prescription_escalates_without_creating_a_request(
+    async def test_a_drug_they_do_not_have_asks_again_and_creates_nothing(
         self,
         refill: RefillRequestWorkflow,
         session: SessionState,
         refills: RefillService,
-        escalations: EscalationService,
     ) -> None:
+        """Not finding the drug is usually not finding the *word*.
+
+        Callers describe their medicines -- "the one for my sugar" -- and a
+        description arrives as a drug name however confidently. Escalating on
+        it sent a caller to the front desk over a turn of phrase, having first
+        told them there was no prescription for "sugar". The record is read
+        back instead, which is what a receptionist would do.
+
+        What must not happen either way is a refill request against a
+        prescription that does not exist.
+        """
         await refill.start(session)
         result = await refill.advance(
             session,
@@ -344,6 +354,35 @@ class TestRefillRequests:
                 date_of_birth=JOHN_SMITH_DOB,
                 medication_name="amoxicillin",
             ),
+            now=NOW,
+        )
+
+        assert result.status is WorkflowStatus.AWAITING_INPUT
+        assert "Metformin 500 mg" in result.message
+        assert refills.store.all() == []
+
+    async def test_a_record_with_nothing_on_it_escalates(
+        self,
+        refill: RefillRequestWorkflow,
+        session: SessionState,
+        refills: RefillService,
+        escalations: EscalationService,
+    ) -> None:
+        """Nothing to read back, so nothing to ask about.
+
+        Robert Johnson: no active prescriptions, and one of two patients with
+        the same name and date of birth, so he arrives through the second
+        factor like any other caller would.
+        """
+        await refill.start(session)
+        await refill.advance(
+            session,
+            RefillRequestInput(full_name="Robert Johnson", date_of_birth=date(1990, 6, 21)),
+            now=NOW,
+        )
+        result = await refill.advance(
+            session,
+            RefillRequestInput(second_factor_value="0411", medication_name="amoxicillin"),
             now=NOW,
         )
 
