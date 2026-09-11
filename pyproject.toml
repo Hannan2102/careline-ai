@@ -45,7 +45,11 @@ packages = ["backend/app"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["backend"]
+# "." so `tests.conftest` is importable: several suites import shared fixtures
+# from it by name. Without it only `python -m pytest` works, because that form
+# happens to add the working directory to sys.path and the `pytest` binary does
+# not -- a difference that made CI fail on a suite that passes locally.
+pythonpath = ["backend", "."]
 asyncio_mode = "auto"
 addopts = "-q --strict-markers"
 markers = [
