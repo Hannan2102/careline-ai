@@ -61,6 +61,7 @@ from app.workflows.existing_patient_booking import (
     ExistingPatientBookingWorkflow,
 )
 from app.workflows.medication_lookup import MedicationLookupInput, MedicationLookupWorkflow
+from app.workflows.new_patient import NewPatientInput, NewPatientWorkflow
 from app.workflows.refill_request import RefillRequestInput, RefillRequestWorkflow
 
 logger = get_logger(__name__)
@@ -211,6 +212,16 @@ class Orchestrator:
             verification, medications, refills, escalations, self.audit
         )
         self.coverage = CoverageLookupWorkflow(verification, coverage, escalations, self.audit)
+        self.registration = NewPatientWorkflow(
+            # The verification service already owns the patient service, and a
+            # second reference passed in beside it could drift to a different
+            # EHR provider than the one identity is checked against.
+            verification.patients,
+            verification,
+            self.booking,
+            escalations,
+            self.audit,
+        )
         self.faq = ClinicFaqWorkflow(escalations)
 
     # ------------------------------------------------------------ one turn
@@ -456,6 +467,11 @@ class Orchestrator:
                 return await self.management.advance(
                     session, self._management_input(extracted, utterance), now=now
                 )
+            case Intent.NEW_PATIENT:
+                await self.registration.start(session)
+                return await self.registration.advance(
+                    session, self._registration_input(extracted, utterance), now=now
+                )
             case Intent.MEDICATION_LOOKUP:
                 await self.lookup.start(session)
                 return await self.lookup.advance(
@@ -497,11 +513,24 @@ class Orchestrator:
         with it, so coming back to it later starts a fresh request rather than
         resuming against times that were offered several minutes ago.
         """
+        if extracted.intent is Intent.NEW_PATIENT and active != self.registration.name:
+            # Not a model judgement, and the only intent exempt from needing
+            # one. Every workflow that asks for a name and date of birth has
+            # just invited this sentence in its retry prompt, and a caller who
+            # takes the invitation while a booking sits half-finished must not
+            # be answered with the same question again. Nothing is lost: they
+            # have no record, so the workflow they are leaving had nothing to
+            # act on.
+            return self._abandon(session, active, wanted=self.registration.name)
         if not extracted.changes_subject:
             return False
         wanted = self._workflow_for(extracted.intent)
         if wanted is None or wanted == active:
             return False
+        return self._abandon(session, active, wanted)
+
+    def _abandon(self, session: SessionState, active: str, wanted: str) -> bool:
+        """Put down the workflow in progress and clear what it was holding."""
         logger.info(
             "subject_changed", session_id=session.session_id, from_workflow=active, to=wanted
         )
@@ -526,6 +555,8 @@ class Orchestrator:
                 return self.coverage.name
             case Intent.REFILL_REQUEST:
                 return self.refill.name
+            case Intent.NEW_PATIENT:
+                return self.registration.name
             case Intent.CLINIC_FAQ:
                 return self.faq.name
             case _:
@@ -548,6 +579,10 @@ class Orchestrator:
                 return await self.management.advance(
                     session, self._management_input(extracted, utterance), now=now
                 )
+            if active == self.registration.name:
+                return await self.registration.advance(
+                    session, self._registration_input(extracted, utterance), now=now
+                )
             if active == self.lookup.name:
                 return await self.lookup.advance(
                     session, self._lookup_input(extracted, utterance), now=now
@@ -569,6 +604,20 @@ class Orchestrator:
         return None
 
     # ------------------------------------------------------- input mapping
+    @staticmethod
+    def _registration_input(extracted: ExtractedTurn, utterance: str) -> NewPatientInput:
+        return NewPatientInput(
+            utterance=utterance,
+            full_name=extracted.full_name,
+            date_of_birth=extracted.date_of_birth,
+            phone=extracted.phone,
+            # Only when it was asked for. Passing the whole utterance the way
+            # booking does would file "Hi, I've never been here before" as the
+            # reason for the visit, because that is the sentence that started
+            # the registration.
+            reason=extracted.reason,
+        )
+
     @staticmethod
     def _booking_input(extracted: ExtractedTurn, utterance: str) -> BookingInput:
         return BookingInput(

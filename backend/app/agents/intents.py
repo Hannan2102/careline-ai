@@ -13,6 +13,11 @@ from enum import StrEnum
 
 class Intent(StrEnum):
     BOOK_APPOINTMENT = "book_appointment"
+    #: Somebody the clinic has never seen, asking to become a patient. Distinct
+    #: from booking: there is no record to book against yet, and distinct from
+    #: a failed verification, which is a patient we could not find rather than
+    #: a person we do not have.
+    NEW_PATIENT = "new_patient"
     LOOKUP_APPOINTMENT = "lookup_appointment"
     CANCEL_APPOINTMENT = "cancel_appointment"
     RESCHEDULE_APPOINTMENT = "reschedule_appointment"

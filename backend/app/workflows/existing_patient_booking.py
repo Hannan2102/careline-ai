@@ -106,11 +106,23 @@ class ExistingPatientBookingWorkflow:
         self.identity = IdentityCollector(verification, self.audit)
 
     # ---------------------------------------------------------------- entry
-    async def start(self, session: SessionState) -> WorkflowResponse:
-        """Begin (or resume) a booking."""
+    async def start(
+        self, session: SessionState, appointment_type: AppointmentType | None = None
+    ) -> WorkflowResponse:
+        """Begin (or resume) a booking.
+
+        ``appointment_type`` is for the caller whose visit type is known
+        without a reason being given -- a first appointment is 45 minutes
+        because it is a first appointment, and no wording of "what's it about"
+        would reveal that. Set here, it is left alone by ``_absorb``, so a
+        reason offered later still becomes the visit note without changing the
+        length of the booking.
+        """
         memory = self._memory(session)
         session.active_workflow = self.name
         self._begin_request(session, memory)
+        if appointment_type is not None:
+            memory.set("appointment_type", appointment_type.value)
         return self._prompt_for_current_state(session)
 
     async def advance(
@@ -157,6 +169,22 @@ class ExistingPatientBookingWorkflow:
                 "I'm having trouble reaching our scheduling system. Let me pass you to "
                 "our front desk so they can book this for you.",
             )
+
+    @staticmethod
+    def _arrival_advice(memory: WorkflowMemory) -> str:
+        """A first visit needs longer, and needs the ID the phone cannot check.
+
+        The registration workflow creates a record from what a caller says
+        about themselves and nothing else. This sentence is where that gets
+        closed: the desk sees the photo ID, and the clinic's published process
+        already promises the intake form (config/clinic.py).
+        """
+        if memory.get("appointment_type") == AppointmentType.NEW_PATIENT.value:
+            return (
+                "As it's your first visit, please arrive about 20 minutes early and "
+                "bring a photo ID and your insurance card."
+            )
+        return "Please arrive about 15 minutes early."
 
     @staticmethod
     def _begin_request(session: SessionState, memory: WorkflowMemory) -> None:
@@ -233,9 +261,15 @@ class ExistingPatientBookingWorkflow:
     @staticmethod
     def _absorb(memory: WorkflowMemory, turn: BookingInput) -> None:
         """Record details supplied ahead of the question that asks for them."""
+        if turn.reason and memory.get("reason") is None:
+            # The reason and the visit type are two things, and only the type
+            # can be known in advance. A registration hands this workflow
+            # NEW_PATIENT before the caller has said what it is about, and
+            # keying both off the type meant the reason was then discarded --
+            # so the appointment carried no visit note at all.
+            memory.set("reason", turn.reason)
         if turn.reason and memory.get("appointment_type") is None:
             classification = classify_reason(turn.reason)
-            memory.set("reason", turn.reason)
             memory.set("appointment_type", classification.appointment_type.value)
             memory.set("type_was_inferred", classification.is_fallback)
 
@@ -443,8 +477,8 @@ class ExistingPatientBookingWorkflow:
             session,
             BookingState.BOOKED,
             WorkflowStatus.COMPLETED,
-            f"You're booked in for {chosen.label}. "
-            "Please arrive about 15 minutes early. Is there anything else?",
+            f"You're booked in for {chosen.label}. {self._arrival_advice(memory)} "
+            "Is there anything else?",
             appointment=appointment,
         )
 

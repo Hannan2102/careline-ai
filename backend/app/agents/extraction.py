@@ -35,6 +35,8 @@ class ExtractedTurn:
     full_name: str | None = None
     date_of_birth: date | None = None
     second_factor_value: str | None = None
+    #: A contact number for somebody being registered, not a factor to check.
+    phone: str | None = None
     reason: str | None = None
     practitioner_name: str | None = None
     medication_name: str | None = None
@@ -133,6 +135,32 @@ CLINIC_DIRECTED_MARKERS: tuple[str, ...] = (
     "do you deal with",
     "insurers do you",
     "insurance do you",
+)
+
+
+#: Ways of saying "you don't have me".
+#:
+#: All assertions about *being* new, or asking to become a patient — never
+#: questions about the process, which belong to the FAQ and beat these on
+#: length ("new patient what", "as a new patient").
+NEW_PATIENT_PHRASES: tuple[str, ...] = (
+    "new patient",
+    "not been before",
+    "never been to",
+    "never been before",
+    "not registered",
+    "register with",
+    "register me",
+    "registering as",
+    "sign up as a patient",
+    "join the practice",
+    "join your practice",
+    "become a patient",
+    "get on your books",
+    "i'm new here",
+    "i am new here",
+    "first time calling",
+    "not a patient yet",
 )
 
 
@@ -282,6 +310,7 @@ INTENT_PHRASES: tuple[tuple[Intent, tuple[str, ...]], ...] = (
             "due in",
         ),
     ),
+    (Intent.NEW_PATIENT, NEW_PATIENT_PHRASES),
     (
         Intent.BOOK_APPOINTMENT,
         (
@@ -513,6 +542,9 @@ _ORDINAL_PATTERN = re.compile(
     r"\b(" + "|".join(sorted(map(re.escape, ORDINAL_WORDS), key=len, reverse=True)) + r")\b"
 )
 
+#: Commas and full stops, for matching a phrase that spans one.
+_PUNCTUATION = re.compile(r"[,.;:!?]")
+
 #: "Oh" is a zero when someone is reading digits aloud, and an ordinary noise
 #: everywhere else -- so it is substituted only on the second-factor path,
 #: never in a date or a name.
@@ -702,6 +734,7 @@ class RuleBasedExtractor:
             full_name=self._name(text, context),
             date_of_birth=self._date_of_birth(text),
             second_factor_value=self._second_factor(lowered, context),
+            phone=self._phone(lowered, context),
             reason=self._reason(text, intent, context),
             practitioner_name=self._practitioner(lowered),
             medication_name=self._medication(lowered, context),
@@ -749,6 +782,13 @@ class RuleBasedExtractor:
         before the appointment verbs, before a bare "do you...?".
         """
         if context.awaiting is not None:
+            # One exception, and it is one the agent asks for: the identity
+            # prompt says "if you've not been to the clinic before, say so and
+            # I can register you". A caller who says it must be heard, and it
+            # cannot be an answer to "what is your name and date of birth" --
+            # so hearing it costs nothing that mid-workflow silence protects.
+            if any(phrase in lowered for phrase in NEW_PATIENT_PHRASES):
+                return Intent.NEW_PATIENT, 0.9
             return Intent.UNKNOWN, 1.0
 
         # Two requests that no single phrase settles, because what makes each
@@ -761,13 +801,31 @@ class RuleBasedExtractor:
             if phrase in lowered:
                 return decided, 0.9
 
+        # Punctuation removed for matching, because a comma in a transcript is
+        # the recogniser's decision rather than the caller's: "I'm a new
+        # patient, what happens" and the same sentence without the comma are
+        # the same question, and a phrase spanning it would match only one.
+        plain = " ".join(_PUNCTUATION.sub(" ", lowered).split())
+
         best: tuple[Intent, float] | None = None
         longest = 0
-        for intent, phrases, confidence in self._tables(lowered):
+        for intent, phrases, confidence in self._tables(plain):
             for phrase in phrases:
-                if len(phrase) > longest and phrase in lowered:
+                if len(phrase) > longest and phrase in plain:
                     longest, best = len(phrase), (intent, confidence)
-        return best or (Intent.UNKNOWN, 0.2)
+        if best is None:
+            return Intent.UNKNOWN, 0.2
+
+        # Being new outranks what they want to do with it. "I've never been
+        # before, can I get an appointment?" scores as a booking on length --
+        # and a booking sends somebody with no record to prove who they are,
+        # fail, and be handed to the front desk. Registering them first is the
+        # only route that ends anywhere.
+        if best[0] is Intent.BOOK_APPOINTMENT and any(
+            phrase in plain for phrase in NEW_PATIENT_PHRASES
+        ):
+            return Intent.NEW_PATIENT, 0.9
+        return best
 
     def _tables(self, lowered: str) -> tuple[tuple[Intent, tuple[str, ...], float], ...]:
         """Every phrase that could claim this utterance, in priority order."""
@@ -852,6 +910,25 @@ class RuleBasedExtractor:
         return None
 
     @staticmethod
+    def _phone(lowered: str, context: ExtractionContext) -> str | None:
+        """A whole phone number, taken down for the first time.
+
+        Only when it was asked for. Numbers turn up everywhere in this domain
+        -- a year of birth, a dose, "the second one" -- and a rule that
+        collected any long run of digits would file a date of birth as a
+        contact number.
+
+        Spoken digits first, because nobody reads a phone number as a number:
+        "five five five, oh one nine, oh one four two" arrives with one digit
+        character in it.
+        """
+        if context.awaiting is not AwaitedInput.PHONE:
+            return None
+        spoken = _spoken_numbers_to_digits(_OH_AS_ZERO.sub("0", lowered))
+        digits = re.sub(r"\D", "", spoken)
+        return digits if len(digits) >= 10 else None
+
+    @staticmethod
     def _second_factor(lowered: str, context: ExtractionContext) -> str | None:
         if context.awaiting is not AwaitedInput.SECOND_FACTOR:
             return None
@@ -912,8 +989,18 @@ class RuleBasedExtractor:
 
     @staticmethod
     def _faq_topic(lowered: str) -> str | None:
+        """The most specific clinic-fact alias in the utterance.
+
+        Matched against the words with punctuation removed, because a caller's
+        comma is the recogniser's decision rather than theirs: "I'm a new
+        patient, what happens?" and "I'm a new patient what happens" are the
+        same question, and an alias that spans the comma would match only one
+        of them.
+        """
+        plain = _PUNCTUATION.sub(" ", lowered)
+        plain = " ".join(plain.split())
         for alias in sorted(FAQ_TOPIC_ALIASES, key=len, reverse=True):
-            if alias.replace("_", " ") in lowered:
+            if alias.replace("_", " ") in plain:
                 return alias
         return None
 

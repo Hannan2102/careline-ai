@@ -250,6 +250,34 @@ call was a one-millisecond turn.
   leaves audio queued that nobody read, so the socket is discarded rather than allowed to
   play the interrupted sentence into the middle of the next one
 
+**New-patient registration** ✅ *(unplanned, and the gap was embarrassing)*
+- Every workflow began by proving the caller was already in the record, which left the
+  person who has never been to the clinic with nowhere to go: they asked to book, were
+  asked for a name and date of birth, failed — because there was nothing to match — and
+  were handed to the front desk as though they had got their own date of birth wrong.
+  Meanwhile the clinic's own published FAQ promised "we'll take your details over the
+  phone", `register_new_patient` had existed since Phase 2, and nothing had ever called
+  it except test fixtures
+- The agent now creates the record, opens the session on it, and books the 45-minute
+  first visit — held in place by three conditions and one argument
+  ([ADR 009](docs/decisions/009-registering-new-patients.md)): a caller must *say* they
+  are new, a name and date of birth already on file stops the write, and only four things
+  are asked for. The argument is that a record created during the call contains nothing
+  but what the caller just said, so there is no third party's data behind the gate
+- A failed verification never routes there. Somebody who misremembers a date of birth is
+  a patient, not a new patient, and an agent that offered registration after a failed
+  attempt would manufacture duplicates out of ordinary human error — a second record is
+  where a clinician reads no allergies and no medications for a person who has both. The
+  retry prompt mentions registration exists, in the same words for everyone who fails,
+  and the caller has to take it
+- Booking is not reimplemented: the registration hands the booking workflow the visit
+  type it cannot infer, and that workflow does the rest
+- **A category-A safety hole, found while writing these tests.** "Should I double my
+  blood pressure tablets?" was *allowed* — the dose-modification rule required the word
+  "dose", and callers name the medicine the way they hold it. "Can I double the dose of
+  my lisinopril" was refused all along, which is why it had never shown up. Now any
+  double/halve/triple is refused except "double check" and "double book"
+
 ## What actually works — and how I know
 
 | Capability | Verified by |
@@ -377,6 +405,13 @@ call was a one-millisecond turn.
 | The same sentence is never said three times | `TestSayingTheSameThingTwice` |
 | Changing the subject mid-flow is the model's call alone | `TestChangingTheSubject` |
 | The agent greets the caller, and the silence timer starts after it | `TestSpeakingFirst` |
+| A stranger registers, is booked in, and is told to bring ID | `tests/workflows/test_new_patient.py` |
+| Details already on file stop the write and hand over | `TestNoSecondRecordForSomebodyWhoHasOne` |
+| A failed verification never becomes a registration | `TestFailedVerificationIsNotARegistration` |
+| Only four things are asked of a new caller | `test_it_asks_for_four_things_and_no_more` |
+| "I'm a new patient" and "I'm a new patient, what happens?" part ways | `TestTellingTheTwoNewPatientQuestionsApart` |
+| Doubling a medicine is refused whether or not the word "dose" is said | `test_unsafe_requests_are_refused_and_categorised` |
+| "Double check" and "double book" stay allowed | `test_the_innocent_uses_of_double_stay_innocent` |
 | Speech streams over one socket for the whole call | `TestTheWebsocketPath` |
 | An interrupted utterance never leaks into the next one | `test_an_abandoned_utterance_does_not_leak_into_the_next` |
 | A socket that will not open falls back to REST rather than silence | `test_a_socket_that_will_not_open_falls_back_to_rest` |
@@ -531,6 +566,7 @@ Try it: `python scripts/text_chat.py --script demo1 --trace`
 | [006](docs/decisions/006-budget-controls.md) | Budget enforced in software |
 | [007](docs/decisions/007-voice-transport.md) | A plain WebSocket for browser audio, not WebRTC |
 | [008](docs/decisions/008-model-understands-rules-decide.md) | The model understands; the rules decide |
+| [009](docs/decisions/009-registering-new-patients.md) | The agent may create a patient record, under three conditions |
 
 One deliberate deviation from the original specification: **`create_refill_request` is not
 on the `EHRProvider` interface.** A refill request is a workflow artifact awaiting

@@ -14,6 +14,31 @@ person rather than the capability menu. And no reply is ever given three times i
 the third identical sentence becomes that same offer, whatever caused the repeat, because
 every loop found in a live call looked the same from the caller's side.
 
+## New-patient registration
+
+The only flow whose precondition is *not* being in the record, and the only one that
+writes a `Patient` (ADR 009). A caller must assert that they are new; a failed
+verification never arrives here.
+
+```mermaid
+stateDiagram-v2
+  [*] --> CollectName: says they are new
+  CollectName --> CollectDob
+  CollectDob --> CheckForDuplicate
+  CheckForDuplicate --> Escalate: name + DOB already on file
+  CheckForDuplicate --> CollectPhone: nothing matches
+  CollectPhone --> CollectPhone: too few digits
+  CollectPhone --> CollectReason
+  CollectReason --> Register
+  Register --> CollectDob: date of birth impossible
+  Register --> Booking: record created, session opened on it
+  Booking --> [*]: 45-minute first visit, bring photo ID
+```
+
+Booking is not reimplemented: the registration hands the booking workflow the visit type
+it could not otherwise infer, and that workflow offers the times and takes the
+confirmation exactly as it does for anyone else.
+
 ## Existing-patient booking
 
 ```mermaid

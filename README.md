@@ -89,6 +89,8 @@ Working today, end to end in text **and by voice from a browser microphone**:
   the mismatched-patient case
 - Booking, rescheduling, cancellation, medication lookup, refill requests, insurance
   cover, clinic FAQ
+- Registration for a caller who is not in the record yet, with a duplicate check before
+  anything is written (ADR 009)
 - A safety layer that refuses clinical questions and escalates them with context
 - Voice over a WebSocket: Deepgram streaming recognition in, Deepgram Aura speech out
   over a socket held open for the call, barge-in, silence handling, and a spending cap

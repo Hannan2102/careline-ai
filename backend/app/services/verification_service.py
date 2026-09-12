@@ -188,12 +188,38 @@ class VerificationService:
         # SecondFactorType, so adding a factor without handling it here becomes
         # a type error rather than a silent "does not match".
 
-    def _succeed(self, session: SessionState, patient: Patient) -> VerificationResult:
+    def accept_registration(self, session: SessionState, patient: Patient) -> VerificationResult:
+        """Open the gate on a record created during this call.
+
+        Not a verification, and deliberately not dressed as one: nobody has
+        been checked against anything. What makes it safe is that the record
+        holds only what the caller has just said, so there is no third party's
+        data behind the gate to protect. A minute-old record with no history
+        cannot disclose anything its subject did not supply.
+
+        It lives here rather than in the workflow because ``VerificationDecision``
+        is the only key to ``SessionState.apply_verification`` and this is the
+        only module allowed to cut one (ADR 003). A workflow that could mint
+        its own would make that guarantee a convention instead of a mechanism.
+        """
+        logger.info(
+            "registration_accepted",
+            session_id=session.session_id,
+            patient_ref=patient.reference,
+        )
+        return self._succeed(session, patient, rationale="record created this call")
+
+    def _succeed(
+        self,
+        session: SessionState,
+        patient: Patient,
+        rationale: str = "single matching record",
+    ) -> VerificationResult:
         session.apply_verification(
             VerificationDecision(
                 state=VerificationState.VERIFIED,
                 patient_ref=patient.reference,
-                rationale="single matching record",
+                rationale=rationale,
             )
         )
         logger.info(

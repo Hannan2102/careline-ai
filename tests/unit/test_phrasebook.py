@@ -139,6 +139,17 @@ CLINIC_TOPICS = (
 
 CLINIC_FACTS = tuple(utterance for utterance, _topic in CLINIC_TOPICS)
 
+NEW_PATIENT = (
+    "I'm a new patient and I'd like to book",
+    "I've never been to this clinic before",
+    "I've never been before, can I get an appointment?",
+    "Can I register with the practice?",
+    "I'd like to join the practice",
+    "I'd like to get on your books",
+    "I'm not registered with you",
+    "I'm new here",
+)
+
 NO_INTENT = (
     "Hello?",
     "Hi",
@@ -221,6 +232,32 @@ class TestClinicFacts:
         assert topic(utterance) == expected
 
 
+class TestSomebodyWhoIsNotAPatientYet:
+    """Being new outranks whatever they want to do with it.
+
+    "I've never been before, can I get an appointment?" scores as a booking on
+    length alone, and a booking sends somebody with no record off to prove who
+    they are, fail, and be handed to the front desk. Registering first is the
+    only route that ends anywhere (ADR 009).
+    """
+
+    @pytest.mark.parametrize("utterance", NEW_PATIENT)
+    def test_it_starts_a_registration(self, utterance: str) -> None:
+        assert route(utterance) is Intent.NEW_PATIENT
+
+    @pytest.mark.parametrize(
+        "utterance",
+        [
+            "I'm a new patient, what happens?",
+            "As a new patient what do I need to do?",
+        ],
+    )
+    def test_but_asking_about_it_is_a_question(self, utterance: str) -> None:
+        """The two share their only distinctive words. One of them is a question."""
+        assert route(utterance) is Intent.CLINIC_FAQ
+        assert topic(utterance) == "new_patient_process"
+
+
 class TestNothingWasAsked:
     """The most common opening line, now that the agent greets first.
 
@@ -269,7 +306,8 @@ class TestNothingDeadEnds:
         + PERSONAL_COVERAGE
         + CLINIC_FACTS
         + MONEY
-        + ACCEPTED_PLANS,
+        + ACCEPTED_PLANS
+        + NEW_PATIENT,
     )
     async def test_the_agent_has_something_to_say(
         self, orchestrator: Orchestrator, utterance: str

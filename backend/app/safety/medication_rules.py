@@ -41,7 +41,17 @@ DOSE_CHANGE_PATTERNS: tuple[str, ...] = (
     r"cut (it |them |the pill|the tablet|my pill)?\s*in half",
     r"split (the |my )?(pill|tablet|dose)",
     r"(take|have) (two|three|double|extra|another|an extra|more)\b",
-    r"double (the |my )?(dose|dosage)",
+    # Not "double the dose" -- just "double". Callers name the medicine the
+    # way they hold it, so "should I double my blood pressure tablets?" never
+    # contains the word this rule used to require, and it was allowed through
+    # to be answered as an ordinary question. Found while testing something
+    # else, which is the only reason it was found.
+    #
+    # Two exclusions, because they are the only innocent uses in this domain.
+    # Everything else the word could mean here is a dose change, and the cost
+    # of being wrong runs one way: a needless transfer to a nurse against
+    # telling somebody to take twice their blood pressure medication.
+    r"\b(double|doubling|triple|tripling|halve|halving)\b(?!\s+(check|checking|book|booking))",
     r"(increase|decrease|lower|raise|reduce|change|adjust) (the |my )?(dose|dosage)",
     r"(take|use) (it |them |my medication )?(less|more) often",
     r"skip (a |my |the )?(dose|pill|tablet)",

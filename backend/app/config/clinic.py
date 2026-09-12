@@ -199,8 +199,16 @@ FAQ_TOPIC_ALIASES: dict[str, str] = {
     "if_i_cancel": "cancellation_policy",
     "bring": "what_to_bring",
     "what_to_bring": "what_to_bring",
-    "new_patient": "new_patient_process",
+    # Asking *about* becoming a patient, not asking to become one. The two
+    # share their only distinctive words -- "new patient" is in both -- so what
+    # separates them is that one of them is a question, and these aliases are
+    # the question. They are longer than the `new_patient` intent phrase, which
+    # is how they win it (agents/extraction.py, longest match wins).
+    "new_patient_what": "new_patient_process",
+    "new_patient_how": "new_patient_process",
+    "as_a_new_patient": "new_patient_process",
     "new_patient_process": "new_patient_process",
+    "new_patient_appointment_like": "new_patient_process",
     "insurance": "insurance",
     "coverage": "insurance",
     # Money, which is not the same question as which plans are accepted.

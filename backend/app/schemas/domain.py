@@ -295,6 +295,12 @@ class Escalation(BaseModel):
 class AuditAction(StrEnum):
     """What was attempted. Reads are audited as well as writes."""
 
+    #: A pre-registration search, and the registration it either allowed or
+    #: stopped. Recorded like every other record operation: a patient created
+    #: over the phone is exactly the kind of write somebody will later need to
+    #: account for.
+    PATIENT_SEARCHED = "patient.searched"
+    PATIENT_REGISTERED = "patient.registered"
     VERIFICATION_ATTEMPTED = "verification.attempted"
     VERIFICATION_SUCCEEDED = "verification.succeeded"
     VERIFICATION_FAILED = "verification.failed"

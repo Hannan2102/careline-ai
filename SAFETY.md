@@ -93,6 +93,34 @@ or even confirmation that a person is a patient — is disclosed before verifica
   cancellation, rescheduling, and any demographic read.
 - Not gated: clinic hours, location, parking, insurance list, new-patient process.
 
+### Registering somebody who is not in the record
+
+One caller cannot be verified, because there is nothing to verify them against: a person
+who has never been to the clinic. The agent may create a record for them and act on it in
+the same call. The full reasoning is in
+[ADR 009](docs/decisions/009-registering-new-patients.md); the short form is that a
+record created during the call contains nothing but what the caller has just said, so
+there is no third party's data behind the gate to protect.
+
+Held in place by three conditions: the caller must say they are new (a failed
+verification never routes there, because a misremembered date of birth would then become
+a duplicate record); a name and date of birth already on file stops the write and hands
+to the front desk; and only a name, a date of birth, a phone number and the reason for
+the visit are asked for.
+
+**A known disclosure, accepted rather than solved.** Because the duplicate branch says
+"we may already have you on file", a caller who supplies a name and date of birth learns
+whether that person is known to the clinic. It is a membership oracle. Closing it would
+mean no new patient could ever register themselves, and it is strictly weaker than the
+disclosure verification already makes — anyone holding a real patient's name and date of
+birth can verify *as* them, which is the larger prize. A deployment that cared would
+confirm registrations out of band, by SMS or email, before acting on one.
+
+**Registration is not identity proofing** and is not treated as such. The record is built
+from unverified assertions, exactly as it is when a receptionist takes them over the
+phone, and the confirmation tells the caller to bring photo ID to a first appointment
+that starts 20 minutes early. The desk closes the loop that a phone call cannot.
+
 ## 4. Escalation and handoff
 
 An escalation preserves context so the human does not restart the conversation.

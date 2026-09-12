@@ -42,6 +42,10 @@ class AwaitedInput(StrEnum):
     REASON = "reason"
     SLOT_CHOICE = "slot_choice"
     MEDICATION_CHOICE = "medication_choice"
+    #: A new patient's contact number. Its own kind rather than SECOND_FACTOR,
+    #: which is four digits checked against a record; this is a whole number
+    #: being taken down for the first time.
+    PHONE = "phone"
     CONFIRMATION = "confirmation"
 
 

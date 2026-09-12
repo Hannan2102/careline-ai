@@ -42,9 +42,18 @@ _PARTIAL_DOB = "_identity.date_of_birth"
 
 #: Deliberately identical whether the record is unknown or the details are
 #: wrong. The difference between those two is itself information (ADR 003).
+#:
+#: It mentions registration, and does not offer it. A caller who has
+#: misremembered their date of birth is not a new patient, and an agent that
+#: routed a failed verification into registration would manufacture duplicate
+#: records out of ordinary human error -- a second record is where a
+#: clinician reads no allergies and no medications for a person who has both.
+#: So the caller has to say it, and the same sentence is said to everyone who
+#: fails, which is what keeps it from being a signal about the record.
 RETRY_IDENTITY = (
     "I couldn't find a match for those details. Could you give me your full name and "
-    "date of birth once more?"
+    "date of birth once more? Or if you've not been to the clinic before, say so and "
+    "I can register you."
 )
 
 ASK_SECOND_FACTOR = (

@@ -50,6 +50,13 @@ REFUSED_UTTERANCES: list[tuple[str, SafetyCategory]] = [
     ("I want to stop taking my lisinopril", SafetyCategory.DOSE_MODIFICATION),
     ("Is it fine if I skip a dose?", SafetyCategory.DOSE_MODIFICATION),
     ("Should I cut the tablet in half?", SafetyCategory.DOSE_MODIFICATION),
+    # Without the word "dose", which is how it is usually said. Callers name
+    # the medicine the way they hold it, and requiring "dose" let the plainest
+    # version of the most dangerous question in the domain through as an
+    # ordinary enquiry. Found while testing registration, not safety.
+    ("Should I double my blood pressure tablets?", SafetyCategory.DOSE_MODIFICATION),
+    ("Can I double up on the metformin?", SafetyCategory.DOSE_MODIFICATION),
+    ("Should I halve my tablets?", SafetyCategory.DOSE_MODIFICATION),
     # Side effects
     ("My blood pressure medicine makes me dizzy", SafetyCategory.MEDICATION_SIDE_EFFECT),
     ("I've felt sick since I started taking it", SafetyCategory.MEDICATION_SIDE_EFFECT),
@@ -122,6 +129,12 @@ def test_ordinary_requests_are_allowed(classifier: SafetyClassifier, utterance: 
     assert decision.outcome is SafetyOutcome.ALLOW, (
         f"over-blocked an administrative request: {utterance!r} (matched {decision.matched_rule})"
     )
+
+
+def test_the_innocent_uses_of_double_stay_innocent(classifier: SafetyClassifier) -> None:
+    """The rule matches the bare word, so its exceptions are load-bearing."""
+    for utterance in ["I'd like to double check my appointment time", "Can I double book?"]:
+        assert classifier.classify(utterance).outcome is SafetyOutcome.ALLOW, utterance
 
 
 def test_asking_for_a_stored_dosage_is_not_a_dose_change(
