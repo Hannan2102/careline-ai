@@ -42,6 +42,10 @@ class DeepgramSTTProvider:
         model: str = "nova-3",
         url: str = DEFAULT_URL,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
+        #: "mulaw" for a phone call. Asking the recogniser for the format the
+        #: carrier already speaks is cheaper and more faithful than companding
+        #: to PCM in Python on the way past (voice/telephony.py).
+        encoding: str = DEFAULT_ENCODING,
         ledger: UsageLedger | None = None,
         session_id: str | None = None,
         connect: Any | None = None,
@@ -51,6 +55,7 @@ class DeepgramSTTProvider:
         self._api_key = api_key
         self.model = model
         self.sample_rate = sample_rate
+        self.encoding = encoding
         self.ledger = ledger
         self.session_id = session_id
         #: Injected in tests so the adapter's own logic is exercised without a
@@ -62,7 +67,7 @@ class DeepgramSTTProvider:
         query = urlencode(
             {
                 "model": self.model,
-                "encoding": DEFAULT_ENCODING,
+                "encoding": self.encoding,
                 "sample_rate": self.sample_rate,
                 "channels": 1,
                 "interim_results": "true",

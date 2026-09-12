@@ -123,6 +123,14 @@ class Settings(BaseSettings):
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
     twilio_phone_number: str | None = None
+    #: Where this service is reachable from the internet, e.g.
+    #: "https://careline.fly.dev" or an ngrok URL in development.
+    #:
+    #: Cannot be derived from the request: Twilio dials the stream URL from
+    #: outside, and behind any proxy the request's own host header is whatever
+    #: the proxy chose to send. It is also half of the webhook signature, so a
+    #: wrong value fails closed rather than opening anything.
+    public_base_url: str | None = None
 
     # --- Mode switches ---------------------------------------------------
     text_only_mode: bool = True

@@ -54,6 +54,7 @@ DEFAULT_MODEL = "aura-2-thalia-en"
 #: Matches Groq's output, so the transport describes one format whichever
 #: provider is configured and the browser needs no per-provider branch.
 SAMPLE_RATE = 24000
+DEFAULT_ENCODING = "linear16"
 SAMPLE_WIDTH = 2
 CHANNELS = 1
 
@@ -76,6 +77,10 @@ class DeepgramTTSProvider:
         ledger: UsageLedger | None = None,
         session_id: str | None = None,
         client: httpx.AsyncClient | None = None,
+        #: "mulaw" at 8 kHz for a phone call. Aura emits it directly, verified
+        #: against the live endpoint, so a telephony call needs no resampling.
+        encoding: str = DEFAULT_ENCODING,
+        sample_rate: int = SAMPLE_RATE,
         streaming: bool = True,
         socket_url: str = DEFAULT_SOCKET_URL,
         connect: Any | None = None,
@@ -86,6 +91,10 @@ class DeepgramTTSProvider:
         self.ledger = ledger
         self.session_id = session_id
         self.streaming = streaming
+        self.encoding = encoding
+        # Shadows the class attribute, which is what a transport reads to
+        # describe the audio it is about to be handed.
+        self.sample_rate = sample_rate
         self._api_key = api_key
         self._socket_url = socket_url
         #: Injected in tests so the adapter's own logic is exercised without a
@@ -152,8 +161,8 @@ class DeepgramTTSProvider:
         """
         return {
             "model": voice.voice_id or voice.model or self.model,
-            "encoding": "linear16",
-            "sample_rate": str(SAMPLE_RATE),
+            "encoding": self.encoding,
+            "sample_rate": str(self.sample_rate),
             "container": "none",
         }
 

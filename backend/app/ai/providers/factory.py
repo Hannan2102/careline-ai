@@ -258,8 +258,15 @@ def build_stt_provider(
     settings: Settings | None = None,
     ledger: UsageLedger | None = None,
     session_id: str | None = None,
+    sample_rate: int | None = None,
+    encoding: str | None = None,
 ) -> STTProvider | None:
-    """The configured STT provider, or ``None`` when speech input is off."""
+    """The configured STT provider, or ``None`` when speech input is off.
+
+    ``sample_rate`` and ``encoding`` are for the telephony transport, which is
+    handed 8 kHz mu-law by the carrier and asks the vendor for the same rather
+    than converting it (voice/telephony.py).
+    """
     resolved = settings or get_settings()
     if not resolved.stt_enabled:
         return None
@@ -268,13 +275,23 @@ def build_stt_provider(
     mock = MockSTTProvider()
 
     if resolved.stt_provider == "deepgram" and resolved.deepgram_api_key:
-        from app.ai.providers.stt.deepgram import DeepgramSTTProvider
+        from app.ai.providers.stt.deepgram import (
+            DEFAULT_ENCODING as STT_ENCODING,
+        )
+        from app.ai.providers.stt.deepgram import (
+            DEFAULT_SAMPLE_RATE as STT_SAMPLE_RATE,
+        )
+        from app.ai.providers.stt.deepgram import (
+            DeepgramSTTProvider,
+        )
 
         paid = DeepgramSTTProvider(
             api_key=resolved.deepgram_api_key,
             model=resolved.deepgram_model,
             ledger=usage,
             session_id=session_id,
+            sample_rate=sample_rate or STT_SAMPLE_RATE,
+            encoding=encoding or STT_ENCODING,
         )
         logger.info("stt_provider_built", provider=paid.name, model=resolved.deepgram_model)
         return GuardedSTTProvider(paid, mock, BudgetGuard(resolved, usage), session_id)
@@ -286,8 +303,14 @@ def build_tts_provider(
     settings: Settings | None = None,
     ledger: UsageLedger | None = None,
     session_id: str | None = None,
+    sample_rate: int | None = None,
+    encoding: str | None = None,
 ) -> TTSProvider | None:
-    """The configured TTS provider, or ``None`` when speech output is off."""
+    """The configured TTS provider, or ``None`` when speech output is off.
+
+    ``sample_rate`` and ``encoding`` let the telephony transport ask for the
+    format a carrier plays, which Aura emits directly.
+    """
     resolved = settings or get_settings()
     if not resolved.tts_enabled:
         return None
@@ -319,7 +342,15 @@ def build_tts_provider(
         if not resolved.deepgram_api_key:
             logger.error("deepgram_tts_selected_without_key_falling_back_to_mock")
             return mock
-        from app.ai.providers.tts.deepgram import DeepgramTTSProvider
+        from app.ai.providers.tts.deepgram import (
+            DEFAULT_ENCODING as TTS_ENCODING,
+        )
+        from app.ai.providers.tts.deepgram import (
+            SAMPLE_RATE as TTS_SAMPLE_RATE,
+        )
+        from app.ai.providers.tts.deepgram import (
+            DeepgramTTSProvider,
+        )
 
         # The same key already buys recognition. Metered rather than
         # rate-limited, so unlike Groq this one is genuinely guarded by the
@@ -330,6 +361,8 @@ def build_tts_provider(
             ledger=usage,
             session_id=session_id,
             streaming=resolved.deepgram_tts_streaming,
+            sample_rate=sample_rate or TTS_SAMPLE_RATE,
+            encoding=encoding or TTS_ENCODING,
         )
         logger.info(
             "tts_provider_built",

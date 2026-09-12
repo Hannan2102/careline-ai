@@ -17,7 +17,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import __version__
 from app.agents.factory import open_database
 from app.ai.usage import get_usage_ledger
-from app.api import agent, calls, escalations, health, records, system, usage, voice_ws
+from app.api import (
+    agent,
+    calls,
+    escalations,
+    health,
+    records,
+    system,
+    twilio_voice,
+    twilio_ws,
+    usage,
+    voice_ws,
+)
 from app.config.settings import EHRProviderName, get_settings
 from app.db.engine import Database
 from app.ehr.factory import get_default_memory_store
@@ -109,6 +120,8 @@ def create_app() -> FastAPI:
     app.include_router(records.router)
     app.include_router(usage.router)
     app.include_router(voice_ws.router)
+    app.include_router(twilio_voice.router)
+    app.include_router(twilio_ws.router)
     return app
 
 
