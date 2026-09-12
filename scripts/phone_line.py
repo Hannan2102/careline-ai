@@ -25,13 +25,16 @@ from __future__ import annotations
 import os
 import re
 import signal
+import socket
 import subprocess
 import sys
 import time
 from types import FrameType
 
-PORT = 8000
-TUNNEL = ("cloudflared", "tunnel", "--url", f"http://localhost:{PORT}")
+#: Preferred, not required. A development API is often already on 8000 with
+#: the dashboard pointed at it, and taking the port from under it to make a
+#: phone call would be a rude way to answer one.
+PREFERRED_PORT = 8000
 URL_PATTERN = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
 
 #: A quick tunnel usually announces itself in a second or two. Past this
@@ -49,9 +52,21 @@ def main() -> int:
         )
         return 1
 
+    port = _free_port()
+    if port != PREFERRED_PORT:
+        print(
+            f"Port {PREFERRED_PORT} is busy, so the phone line is on {port}. "
+            "Whatever is on 8000 keeps running.",
+            file=sys.stderr,
+        )
+
     print("Opening a tunnel...", file=sys.stderr)
     tunnel = subprocess.Popen(
-        TUNNEL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, bufsize=1
+        ("cloudflared", "tunnel", "--url", f"http://localhost:{port}"),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
     )
     try:
         url = _wait_for_url(tunnel)
@@ -69,7 +84,7 @@ def main() -> int:
                 "--app-dir",
                 "backend",
                 "--port",
-                str(PORT),
+                str(port),
             ],
             env={**os.environ, "PUBLIC_BASE_URL": url},
         )
@@ -77,6 +92,18 @@ def main() -> int:
         return api.wait()
     finally:
         _stop(tunnel)
+
+
+def _free_port() -> int:
+    """The preferred port if it is free, otherwise whatever the OS offers."""
+    for candidate in (PREFERRED_PORT, 0):
+        with socket.socket() as probe:
+            try:
+                probe.bind(("127.0.0.1", candidate))
+            except OSError:
+                continue
+            return int(probe.getsockname()[1])
+    raise RuntimeError("no port available")  # pragma: no cover - defensive
 
 
 def _wait_for_url(tunnel: subprocess.Popen[str]) -> str | None:
