@@ -359,3 +359,36 @@ class TestTheAgentSpeaksFirst:
         voice, _tts, _out = build(orchestrator, [], greeting=GREETING)
         await voice.run(chunks(3))
         assert voice.manager.stats.turns == 0
+
+
+class TestHangingUp:
+    """The caller says they are finished, and the line closes.
+
+    Over text, ending the session is bookkeeping. Over the phone it is the
+    call ending, and the difference between the agent hanging up politely and
+    the caller sitting through "are you still there?" before being cut off for
+    silence.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_call_ends_after_the_goodbye(self, orchestrator: Orchestrator) -> None:
+        voice, tts, _out = build(
+            orchestrator, ["Are you open on Saturday?", "No, that's everything thanks"]
+        )
+
+        await voice.run(chunks(4))
+
+        assert "Thanks for calling" in tts.spoken[-1], "hung up without saying goodbye"
+        assert voice.manager.close_reason is CloseReason.COMPLETED
+
+    @pytest.mark.asyncio
+    async def test_it_does_not_end_while_there_is_more_to_do(
+        self, orchestrator: Orchestrator
+    ) -> None:
+        voice, _tts, _out = build(orchestrator, ["Are you open on Saturday?", "Yes actually"])
+
+        await voice.run(chunks(3))
+
+        assert voice.manager.close_reason is CloseReason.CALLER_HUNG_UP, (
+            "closed the call on a caller who had just said they wanted something else"
+        )

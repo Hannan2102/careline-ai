@@ -467,6 +467,18 @@ NO_WORDS = frozenset(
         "do not",
         "cancel that",
         "never mind",
+        # Ways of saying "that's me finished", for the question the agent asks
+        # at the end of everything. Read as a no wherever they appear, which
+        # is harmless: none of them is a plausible yes to anything else.
+        "that's all",
+        "that is all",
+        "that's everything",
+        "that's it",
+        "nothing else",
+        "no more",
+        "all set",
+        "we're done",
+        "i'm done",
         "leave it",
         "forget it",
         "hold on",

@@ -28,6 +28,7 @@ from app.agents.intents import Intent
 from app.agents.state import SessionState
 from app.agents.trace import StageTimings, TraceStore, TurnTrace
 from app.ai.usage import UsageLedger
+from app.config.clinic import CLINIC_NAME
 from app.config.settings import Settings, get_settings
 from app.observability.logging import bind_trace, clear_trace, get_logger
 from app.safety.models import SafetyOutcome
@@ -53,6 +54,7 @@ from app.workflows.base import (
     SlotOffer,
     WorkflowMemory,
     WorkflowResponse,
+    WorkflowStatus,
 )
 from app.workflows.clinic_faq import ClinicFaqInput, ClinicFaqWorkflow
 from app.workflows.coverage_lookup import CoverageLookupInput, CoverageLookupWorkflow
@@ -106,6 +108,21 @@ OUT_OF_SCOPE_MESSAGE = (
 )
 
 DECLINED_MESSAGE = "No problem. Is there anything else I can help with?"
+
+#: Asked at the end of anything the agent finished doing.
+ANYTHING_ELSE = "Is there anything else I can help with?"
+
+#: And what to say when the answer is no.
+#:
+#: The call ends here. A request finished, nothing else wanted, and a line left
+#: open after that is one the caller has to work out how to leave -- which over
+#: the phone means sitting through "are you still there?" and then being hung
+#: up on for silence.
+GOODBYE_MESSAGE = f"Thanks for calling {CLINIC_NAME}. Take care."
+
+#: Said when they do want something else, in place of the capability menu:
+#: they have just used the agent, so they know what it does.
+MORE_HELP_MESSAGE = "Of course. What can I do for you?"
 
 HANDOVER_MESSAGE = (
     "Of course — I'll pass you to a member of our staff. I've made a note of what "
@@ -279,7 +296,7 @@ class Orchestrator:
             response, direct = await self._answer(session, extracted, context, utterance, moment)
             workflow_ms = (time.perf_counter() - workflow_started) * 1000
 
-            message = self._break_a_loop(session, response.message if response else direct.message)
+            message = self._break_a_loop(session, self._offer_more_help(session, response, direct))
             return await self._record(
                 session,
                 turn_number,
@@ -347,6 +364,13 @@ class Orchestrator:
             return None
 
         offer = Offer(pending)
+        if offer is Offer.ANYTHING_ELSE:
+            if extracted.confirm is False:
+                logger.info("call_completed", session_id=session.session_id)
+                session.end(now)
+                return None, _Direct(GOODBYE_MESSAGE)
+            return None, _Direct(MORE_HELP_MESSAGE)
+
         if extracted.confirm is False:
             return None, _Direct(DECLINED_MESSAGE)
 
@@ -358,6 +382,34 @@ class Orchestrator:
                 _Direct(FALLBACK_MESSAGE),
             )
         return None, self._hand_over(session, utterance)
+
+    @staticmethod
+    def _offer_more_help(
+        session: SessionState, response: WorkflowResponse | None, direct: _Direct
+    ) -> str:
+        """End a finished request by asking whether there is another one.
+
+        Here rather than in each workflow, for two reasons. Every completion
+        should ask it and several did not -- a medication lookup read the
+        dosage back and stopped, leaving the caller to work out whether the
+        agent was still listening. And the *answer* has to live somewhere
+        central anyway: "no, that's everything" belongs to no workflow, which
+        is why it used to reach the capability menu.
+
+        Left alone when the workflow is escalating (the call is on its way to
+        a person), when it has already asked something of its own, and when
+        the message is a question already.
+        """
+        if response is None:
+            return direct.message
+        if response.status is not WorkflowStatus.COMPLETED or response.offer is not None:
+            return response.message
+
+        session.workflow_state[PENDING_OFFER] = Offer.ANYTHING_ELSE.value
+        message = response.message.strip()
+        if message.endswith("?"):
+            return message
+        return f"{message} {ANYTHING_ELSE}"
 
     def _break_a_loop(self, session: SessionState, message: str) -> str:
         """Offer a person rather than say the same sentence a third time.

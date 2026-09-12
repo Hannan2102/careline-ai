@@ -24,9 +24,12 @@ from app.agents.extraction import ExtractedTurn, ExtractionContext, RuleBasedExt
 from app.agents.factory import Runtime, build_runtime
 from app.agents.intents import Intent
 from app.agents.orchestrator import (
+    ANYTHING_ELSE,
     DECLINED_MESSAGE,
     FALLBACK_MESSAGE,
+    GOODBYE_MESSAGE,
     HANDOVER_MESSAGE,
+    MORE_HELP_MESSAGE,
     OUT_OF_SCOPE_MESSAGE,
     STUCK_MESSAGE,
 )
@@ -299,3 +302,77 @@ class _Scripted:
             return baseline
         intent, changed = move
         return replace(baseline, intent=intent, confidence=0.9, changes_subject=changed)
+
+
+class TestEndingTheCall:
+    """A finished request asks whether there is another, and takes no for an answer.
+
+    The question was already there on some replies and missing from others,
+    and nothing anywhere could hear the answer: "no, that's everything" landed
+    on the capability menu, which is a rude way to end a call and leaves the
+    line open for the silence timer to close instead.
+    """
+
+    async def test_a_completed_request_asks(self, runtime: Runtime, session: SessionState) -> None:
+        answered = await say(
+            runtime, session, "What does my prescription say?", IDENTIFY, "Metformin"
+        )
+
+        assert "One tablet twice daily" in answered
+        assert ANYTHING_ELSE in answered
+
+    async def test_no_ends_the_call(self, runtime: Runtime, session: SessionState) -> None:
+        await say(runtime, session, "Are you open on Saturday?")
+
+        goodbye = await say(runtime, session, "No, that's everything thanks")
+
+        assert goodbye == GOODBYE_MESSAGE
+        assert not session.is_active, "the line was left open after the caller finished"
+
+    @pytest.mark.parametrize(
+        "utterance",
+        ["No thanks", "That's all, thanks", "Nope, that's it", "Nothing else", "No, I'm done"],
+    )
+    async def test_the_ways_people_say_it(
+        self, runtime: Runtime, session: SessionState, utterance: str
+    ) -> None:
+        await say(runtime, session, "Are you open on Saturday?")
+
+        assert await say(runtime, session, utterance) == GOODBYE_MESSAGE
+
+    async def test_yes_does_not_read_the_menu_back(
+        self, runtime: Runtime, session: SessionState
+    ) -> None:
+        """They have just used the agent. They know what it does."""
+        await say(runtime, session, "Are you open on Saturday?")
+
+        assert await say(runtime, session, "Yes actually") == MORE_HELP_MESSAGE
+        assert session.is_active
+
+    async def test_saying_the_next_thing_instead_of_yes_works(
+        self, runtime: Runtime, session: SessionState
+    ) -> None:
+        """Most callers never answer the question; they just carry on."""
+        await say(runtime, session, "Are you open on Saturday?")
+
+        answer = await say(runtime, session, "Where are you?")
+
+        assert "Oakwood Avenue" in answer
+        assert session.is_active
+
+    async def test_an_escalation_is_not_asked(
+        self, runtime: Runtime, session: SessionState
+    ) -> None:
+        """The call is on its way to a person; there is nothing else to offer."""
+        answer = await say(runtime, session, "Can I speak to someone please?")
+
+        assert ANYTHING_ELSE not in answer
+
+    async def test_a_workflow_with_its_own_question_keeps_it(
+        self, runtime: Runtime, session: SessionState
+    ) -> None:
+        """A cancellation offers to rebook, and that offer must survive."""
+        cancelled = await say(runtime, session, "I need to cancel my appointment", IDENTIFY, "Yes")
+
+        assert "Would you like to rebook now?" in cancelled
+        assert ANYTHING_ELSE not in cancelled

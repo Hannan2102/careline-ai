@@ -60,6 +60,10 @@ class Offer(StrEnum):
 
     BOOK_APPOINTMENT = "book_appointment"
     HUMAN = "human"
+    #: "Is there anything else?" -- attached to every completed request by the
+    #: orchestrator rather than by the workflows, so that answering it works
+    #: the same way whatever the caller had just finished doing.
+    ANYTHING_ELSE = "anything_else"
 
 
 class SlotOffer(BaseModel):

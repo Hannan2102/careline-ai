@@ -405,6 +405,9 @@ call was a one-millisecond turn.
 | The same sentence is never said three times | `TestSayingTheSameThingTwice` |
 | Changing the subject mid-flow is the model's call alone | `TestChangingTheSubject` |
 | The agent greets the caller, and the silence timer starts after it | `TestSpeakingFirst` |
+| A finished request asks whether there is another one | `TestEndingTheCall` |
+| "No, that's everything" ends the call with a goodbye | `test_no_ends_the_call` |
+| And the voice call actually hangs up, after speaking it | `TestHangingUp` |
 | A stranger registers, is booked in, and is told to bring ID | `tests/workflows/test_new_patient.py` |
 | Details already on file stop the write and hand over | `TestNoSecondRecordForSomebodyWhoHasOne` |
 | A failed verification never becomes a registration | `TestFailedVerificationIsNotARegistration` |

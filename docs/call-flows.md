@@ -8,7 +8,13 @@ silence leaves the caller guessing whether it connected, and the ones who guess 
 "hello?", which carries no intent. It is speech, not a turn: it never reaches the
 orchestrator, and the caller can talk straight over it.
 
-**Three things happen around every flow below.** Safety runs before any of them and can
+**Every flow below ends the same way.** A completed request asks whether there is
+anything else, and the answer is handled by the orchestrator rather than by the workflow
+that finished — "no, that's everything" belongs to none of them. No ends the call with a
+goodbye; yes asks what else, without reading the capability menu back to somebody who has
+just used the agent; and anything that is neither is simply the next request.
+
+**Three more things happen around every flow below.** Safety runs before any of them and can
 end the turn on its own. A request the agent cannot serve is answered with an offer of a
 person rather than the capability menu. And no reply is ever given three times in a row —
 the third identical sentence becomes that same offer, whatever caused the repeat, because
