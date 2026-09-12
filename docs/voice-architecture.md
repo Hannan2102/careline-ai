@@ -1,7 +1,8 @@
 # Voice architecture
 
 Phases 13–15. The turn manager, the voice session, and the browser transport are
-**built and tested** (Phase 13). Telephony is not (Phase 15).
+**built and tested** (Phase 13), and so is telephony (Phase 15) — both over the same
+`VoiceSession`.
 
 ## What exists
 
@@ -113,12 +114,55 @@ speculative narration of an unfinished EHR write is exactly the failure mode to 
 
 ## Telephony (Phase 15)
 
-`Patient phone → Twilio number → SIP trunk → LiveKit room → same voice agent.`
+`Patient phone → Twilio number → Media Streams websocket → same VoiceSession.`
 
-This is where WebRTC becomes load-bearing, for reasons unrelated to the browser path:
-SIP interworking, and a genuinely lossy network. Nothing above `VoiceSession` changes.
-Telephony adds 8 kHz narrowband audio, DTMF, and carrier latency. It changes the STT
-configuration and nothing else.
+Built, and driving the same `VoiceSession` as the browser. No LiveKit and no SIP
+interworking: Twilio's Media Streams hands the call's audio over a plain websocket,
+which is the transport this project already speaks (ADR 007). The earlier plan routed it
+through a LiveKit room, which would have added a hop to somebody else's datacentre for
+audio that arrives at our door either way.
+
+**There is no codec.** The prediction above — "it changes the STT configuration and
+nothing else" — turned out to be exactly right, and better than expected. Twilio speaks 8
+kHz G.711 mu-law both ways; Deepgram's recogniser accepts `encoding=mulaw&sample_rate=8000`
+and Aura emits it (verified live: `audio/mulaw;rate=8000`). Asking both vendors for the
+format the carrier already speaks means no resampling, no companding, and nowhere for a
+byte-offset error to turn speech into static. `voice/telephony.py` is base64 and JSON, and
+has a test asserting it never grows an `audioop` or `numpy` import.
+
+Two things telephony does *better* than the browser:
+
+| | Browser | Twilio |
+|---|---|---|
+| Barge-in | bespoke `interrupt` event, because sent audio is queued in the page | `clear`, a protocol primitive |
+| "Has the caller heard this yet?" | estimated by pacing bytes at the sample rate | `mark` echoed back when it has actually played |
+
+What telephony adds is that anyone can dial it. The webhook is signature-checked with
+Twilio's HMAC over the URL *and* the body, and refuses when no auth token is configured
+rather than skipping the check — "validate if configured" is an open phone line one
+environment variable away. The media socket itself cannot be signed (Twilio does not sign
+the stream); it is protected by the per-call stream URL and by the limits every call
+already has: ten minutes, twenty turns, and a spending cap.
+
+DTMF arrives as its own event and is parsed but not yet acted on. Nothing in the agent
+asks the caller to press a number.
+
+### Making a call without deploying
+
+Twilio dials in from the internet, so it needs a public address. A tunnel gives one:
+
+```
+brew install cloudflared
+make phone
+```
+
+`PUBLIC_BASE_URL` is half of the webhook signature *and* the address Twilio is told to
+stream to, and a quick tunnel's address is issued when it opens — so the tunnel has to
+come up first and the API has to start knowing it. Getting that order wrong produces a
+signature that never validates, which looks identical to a misconfigured auth token.
+`scripts/phone_line.py` exists to make the order impossible to get wrong.
+
+## Voice-specific risks
 
 ## Voice-specific risks
 

@@ -6,7 +6,7 @@ PIP := uv pip install --python .venv/bin/python
 COMPOSE := docker compose
 
 .DEFAULT_GOAL := help
-.PHONY: help install up down logs reset seed wait-fhir dev chat dashboard dashboard-install dashboard-check test test-int lint fmt typecheck check budget smoke-cloud smoke-voice measure-tts voice clean
+.PHONY: help install up down logs reset seed wait-fhir dev phone chat dashboard dashboard-install dashboard-check test test-int lint fmt typecheck check budget smoke-cloud smoke-voice measure-tts voice clean
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -42,6 +42,9 @@ seed: ## Load synthetic data into the configured EHR
 
 dev: ## Run the backend API (http://localhost:8000/docs)
 	$(PY) -m uvicorn app.main:app --reload --app-dir backend --port 8000
+
+phone: ## Put the agent on a real phone line through a tunnel (needs cloudflared)
+	$(PY) scripts/phone_line.py
 
 chat: ## Talk to the agent in the terminal (ARGS="--script refill --trace")
 	$(PY) scripts/text_chat.py $(ARGS)

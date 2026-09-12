@@ -287,13 +287,22 @@ session is what made the difference mean anything.
 
 ---
 
-### ⬜ Phase 15 — Twilio phone integration *(opt-in, budget permitting)*
-Twilio number → SIP → LiveKit → existing pipeline.
+### 🟡 Phase 15 — Twilio phone integration *(opt-in, budget permitting)*
+Twilio number → Media Streams → existing pipeline.
 
 **Acceptance**
-- A real call reaches the agent and completes a booking
-- Zero duplicated business logic
-- Explicit developer approval recorded before enabling
+- [ ] A real call reaches the agent and completes a booking — the adapter is built and
+      tested against the wire format; what remains is ringing it
+- [x] Zero duplicated business logic — the same `VoiceSession`, and no workflow changed
+- [x] Explicit developer approval recorded before enabling — the webhook refuses without
+      a configured auth token, and voice is off unless `TEXT_ONLY_MODE=false`
+
+No LiveKit and no SIP: Media Streams hands the audio over a plain websocket, which is
+already this project's transport (ADR 007). No codec either — Deepgram and Aura both
+speak the carrier's 8 kHz mu-law, so telephony added base64 and JSON and nothing else
+(docs/voice-architecture.md).
+
+`make phone` puts it on a real line through a tunnel, with no deployment.
 
 ---
 
