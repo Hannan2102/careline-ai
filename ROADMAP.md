@@ -292,7 +292,9 @@ Twilio number → Media Streams → existing pipeline.
 
 **Acceptance**
 - [ ] A real call reaches the agent and completes a booking — the adapter is built and
-      tested against the wire format; what remains is ringing it
+      verified over the public internet against the real vendors; what remains is a leg
+      into it, which Twilio's trial will not sell without an upgrade (see
+      PROJECT_STATUS.md). A SIP domain is provisioned as the free way round
 - [x] Zero duplicated business logic — the same `VoiceSession`, and no workflow changed
 - [x] Explicit developer approval recorded before enabling — the webhook refuses without
       a configured auth token, and voice is off unless `TEXT_ONLY_MODE=false`

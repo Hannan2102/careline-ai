@@ -1,6 +1,6 @@
 # Project status
 
-*Last updated: 2026-09-11*
+*Last updated: 2026-09-21*
 
 ## Current phase
 
@@ -277,6 +277,25 @@ call was a one-millisecond turn.
   "dose", and callers name the medicine the way they hold it. "Can I double the dose of
   my lisinopril" was refused all along, which is why it had never shown up. Now any
   double/halve/triple is refused except "double check" and "double book"
+
+**Phase 15 — Telephony** 🟡 *(built and proven; blocked on Twilio's trial, not on code)*
+- The adapter is finished and verified over the public internet. A tunnel was opened, a
+  client that behaves like Twilio connected to the real stream URL, and the agent greeted
+  it: 7.5 seconds of 8 kHz mu-law came back, marks were echoed, and the decoded audio
+  peaked at 18812 — speech, not the silence or static a codec error produces without
+  raising anything
+- **What blocks a dialable number is Twilio's trial, and it is a closed loop.** A trial
+  account cannot buy a number without a verified caller ID, cannot verify a caller ID
+  without upgrading, and cannot place verification calls through the API at all
+  (error 10002). The only way through is a paid upgrade
+- **The free way round is provisioned and waiting**: a SIP domain,
+  `careline-0316e8.sip.twilio.com`, with a credential list mapped for registration and
+  calls, pointed at whatever `PUBLIC_BASE_URL` the tunnel has that day. A softphone
+  registered against it reaches the same webhook and the same media stream — Twilio does
+  not care whether the leg arrived from a carrier or a SIP client. Untested: whether a
+  trial account accepts the inbound SIP call
+- Resuming means: `make phone`, then re-point the SIP domain's `VoiceUrl` at the new
+  tunnel address (it changes every run), then call from Linphone
 
 ## What actually works — and how I know
 
