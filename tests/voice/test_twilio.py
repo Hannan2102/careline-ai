@@ -303,9 +303,15 @@ CHUNK_GAP = 0.02
 class TestAWholeCallOverTheCarrier:
     @pytest.fixture(autouse=True)
     def _telephony_runtime(
-        self, memory_ehr: EHRProvider, settings: Settings, monkeypatch: pytest.MonkeyPatch
+        self, wall_clock_ehr: EHRProvider, settings: Settings, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        runtime = build_runtime(ehr=memory_ehr, settings=Settings(_env_file=None, app_env="test"))
+        # `wall_clock_ehr`: a call drives itself in real time, so the diary has
+        # to be seeded around the real date or these tests expire (see the
+        # fixture). Nothing here books yet, which is exactly when to get it
+        # right — the failure arrives weeks later, on an unrelated commit.
+        runtime = build_runtime(
+            ehr=wall_clock_ehr, settings=Settings(_env_file=None, app_env="test")
+        )
         monkeypatch.setattr("app.api.twilio_ws.get_runtime", lambda: runtime)
         monkeypatch.setattr("app.api.twilio_ws.get_settings", lambda: settings)
 
