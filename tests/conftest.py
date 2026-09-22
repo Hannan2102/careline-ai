@@ -74,6 +74,30 @@ async def memory_ehr(seeded_store: InMemoryFhirStore) -> AsyncIterator[MemoryFHI
     await provider.aclose()
 
 
+@pytest.fixture
+async def wall_clock_ehr() -> AsyncIterator[MemoryFHIRProvider]:
+    """Seeded around the real date, for the tests that run on the real clock.
+
+    Almost everything here injects `SEED_NOW` and is seeded at `SEED_TODAY`, so
+    slot arithmetic is deterministic forever. The voice session cannot: it owns
+    the ticker for a call and drives itself in real time, which is the point of
+    it (see `tests/voice/test_voice_session.py`).
+
+    Mixing the two is a test that expires. The diary is seeded fourteen days
+    past `SEED_TODAY`; a wall-clock booking searches from tomorrow; and on
+    2026-09-21 tomorrow ran past the end of the fixture, so the agent correctly
+    reported no availability and a green suite went red having changed
+    nothing. The comment above `SEED_NOW` had predicted exactly that, which is
+    a good argument for fixtures that cannot drift rather than comments warning
+    that they can.
+    """
+    store = InMemoryFhirStore()
+    await seed_memory_store(store, today=datetime.now(UTC).date())
+    provider = MemoryFHIRProvider(store=store)
+    yield provider
+    await provider.aclose()
+
+
 @pytest.fixture(
     params=[
         pytest.param("memory", id="memory"),

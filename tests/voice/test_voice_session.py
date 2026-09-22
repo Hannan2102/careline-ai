@@ -92,9 +92,16 @@ async def chunks(count: int) -> AsyncIterator[bytes]:
 
 
 @pytest.fixture
-def orchestrator(memory_ehr: EHRProvider) -> Orchestrator:
+def orchestrator(wall_clock_ehr: EHRProvider) -> Orchestrator:
+    """Seeded around the real date, because these tests run on it.
+
+    `wall_clock_ehr`, not `memory_ehr`: the session owns the ticker and drives
+    itself in real time, so a diary seeded at a fixed date eventually sits in
+    the past and the agent correctly answers that it has no availability. That
+    happened on 2026-09-21, thirteen days after the fixture was written.
+    """
     return build_runtime(
-        ehr=memory_ehr, settings=Settings(_env_file=None, app_env="test")
+        ehr=wall_clock_ehr, settings=Settings(_env_file=None, app_env="test")
     ).orchestrator
 
 
