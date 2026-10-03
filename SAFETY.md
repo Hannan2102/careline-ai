@@ -80,7 +80,11 @@ and creates an urgent escalation. It never assesses severity, and it never reass
 No patient-specific information — appointments, medications, conditions, demographics,
 or even confirmation that a person is a patient — is disclosed before verification.
 
-- **Primary factors:** full name + date of birth.
+- **Primary factors:** full name + date of birth, each confirmed by the caller before
+  anything is checked: the name spelled back letter by letter, the date read back with
+  the month as a word, and an ambiguous date asked about rather than guessed
+  ([ADR 010](docs/decisions/010-identity-first-opening.md)). Nothing the caller has not
+  agreed to is submitted for verification or written into a new record.
 - **Secondary factor** (required when more than one candidate matches, or when the
   primary match is weak): last four digits of the phone on file, or postal code.
 - **Exactly one match** → verified. **Zero matches** → nothing disclosed, including whether
@@ -91,7 +95,10 @@ or even confirmation that a person is a patient — is disclosed before verifica
   cannot talk their way into a verified state.
 - Gated behind verification: medication retrieval, appointment details, refill requests,
   cancellation, rescheduling, and any demographic read.
-- Not gated: clinic hours, location, parking, insurance list, new-patient process.
+- Not gated: clinic hours, location, parking, insurance list, new-patient process. These
+  never need verification, though by default every call takes identity first and
+  answers them afterwards; `IDENTITY_FIRST_ALLOW_FAQ` answers an opening one straight
+  away.
 
 ### Registering somebody who is not in the record
 

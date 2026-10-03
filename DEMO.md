@@ -22,14 +22,16 @@ Metformin 500 mg, *one tablet twice daily with meals*. Lisinopril 10 mg, *one ta
 
 > "Hi, I'd like to schedule a diabetes follow-up with Dr. Patel next week."
 
-1. Agent asks for name and date of birth
-2. Verification succeeds (exactly one match)
-3. Reason → `DIABETES_FOLLOW_UP` (30 min)
-4. Free slots searched for Dr. Patel
-5. Two or three options offered
-6. Patient picks one — "the Tuesday one" resolves against the offered set
-7. `Appointment` created in FHIR; `Slot` flips to `busy`
-8. Confirmation read back; dashboard updates
+1. The greeting has already asked for a name; the request is held (ADR 010)
+2. The name is spelled back ("J-O-H-N … S-M-I-T-H"), the date of birth read back
+   ("the fifteenth of February, nineteen eighty-five"), and each confirmed
+3. Verification succeeds (exactly one match)
+4. Reason → `DIABETES_FOLLOW_UP` (30 min)
+5. Free slots searched for Dr. Patel
+6. Two or three options offered, in the same reply as "you're verified"
+7. Patient picks one — "the Tuesday one" resolves against the offered set
+8. `Appointment` created in FHIR; `Slot` flips to `busy`
+9. Confirmation read back; dashboard updates
 
 **Shows:** verification, entity extraction, reference resolution, scheduling constraints,
 a real EHR mutation.
@@ -64,7 +66,9 @@ booked. Both state changes visible in FHIR.
 
 > "Are you open on Saturday?"
 
-Answered from structured clinic data, no verification required, no RAG.
+Answered from structured clinic data, no RAG. Nothing in the answer needs verification,
+but identity comes first by default (ADR 010), so it is answered the moment the caller
+is verified; with `IDENTITY_FIRST_ALLOW_FAQ=true` it is answered straight away.
 
 ## Demo 6 — Failed verification
 
@@ -72,6 +76,35 @@ Answered from structured clinic data, no verification required, no RAG.
 
 Zero matches → no information disclosed, not even whether a record exists. After repeated
 failures, an escalation to the front desk.
+
+## Demo 6½ — The identity-first opening
+
+```bash
+make chat ARGS="--script identity --trace"
+```
+
+> "Hi, when is my next appointment?" … "Maria Garsia"
+
+The request is held while identity is taken. The surname is spelled back as
+G-A-R-S-I-A, and the caller corrects it by spelling ("No, it's G A R C I A"). The date
+"11/03/1972" is two different birthdays, so the agent asks "March eleventh or November
+third?" and reads the chosen one back. Verification then runs once, and the held
+request is answered in the same reply. The trace shows workflow `identity`, each named
+step, the corrected read-back audited as `identity.not_confirmed`, and no name or date
+anywhere in the entities.
+
+**Shows:** a misheard name the caller can see and fix; a date that is never guessed.
+
+## Demo 6¾ — A new patient
+
+```bash
+make chat ARGS="--script register --trace"
+```
+
+"I'm new" at the opening goes straight to registration: the name is spelled back, the
+date of birth read back, and the phone number taken. It is read out in two pieces, as
+people do, and joined back together. Registered, the agent says what it can do; the
+caller books, and the first visit is the 45-minute one, asked what it is for.
 
 ## Demo 7 — Browser voice *(paid, budget-controlled)*
 

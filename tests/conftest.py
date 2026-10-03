@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, date, datetime
+from typing import Any, Protocol
 
 import pytest
 
@@ -38,6 +39,40 @@ SEED_NOW = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
 
 JOHN_SMITH = "Patient/demo-john-smith"
 JOHN_SMITH_DOB = date(1985, 2, 15)
+
+#: How a caller who gets everything right first time verifies (ADR 010): a
+#: name, yes to its spelling, a date of birth, yes to its read-back.
+#:
+#: Most tests used to open with "My name is John Smith and I was born ..." in a
+#: single turn. Every call now takes and confirms identity first, so a test
+#: that is about something else gets there through this, and the tests that
+#: are *about* identity spell out each step themselves.
+VERIFY_JOHN_SMITH: tuple[str, ...] = ("John Smith", "yes", "15 February 1985", "yes")
+
+
+class _Orchestrates(Protocol):
+    async def handle_turn(
+        self, session: Any, utterance: str, now: datetime | None = None
+    ) -> Any: ...
+
+
+async def verify_by_conversation(
+    orchestrator: _Orchestrates,
+    session: Any,
+    *,
+    now: datetime | None = SEED_NOW,
+    lines: tuple[str, ...] = VERIFY_JOHN_SMITH,
+) -> str:
+    """Say each identity line in turn; return what the agent said last.
+
+    The last reply is the one that matters to most callers of this: it is
+    "Thanks, John, you're verified." followed by whatever they had asked for
+    before giving their name.
+    """
+    message = ""
+    for line in lines:
+        message = (await orchestrator.handle_turn(session, line, now=now)).message
+    return message
 
 
 @pytest.fixture

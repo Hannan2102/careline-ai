@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from tests.conftest import JOHN_SMITH
+from tests.conftest import JOHN_SMITH, VERIFY_JOHN_SMITH, verify_by_conversation
 
 from app.agents.factory import Runtime, build_runtime
 from app.agents.intents import Intent
@@ -40,17 +40,27 @@ async def say(runtime: Runtime, session: SessionState, utterance: str) -> str:
     return result.message
 
 
+async def identify(runtime: Runtime, session: SessionState) -> str:
+    """Name and date of birth in one breath, then yes to each read-back."""
+    return await verify_by_conversation(
+        runtime.orchestrator, session, now=NOW, lines=(IDENTIFY, "yes", "yes")
+    )
+
+
 class TestDemoScenarios:
     async def test_demo_1_booking_end_to_end(
         self, runtime: Runtime, session: SessionState, ehr: EHRProvider
     ) -> None:
-        assert "name and date of birth" in await say(
+        # Identity first (ADR 010): the request is heard, held, and acted on
+        # the moment the caller is verified.
+        assert "existing patient" in await say(
             runtime,
             session,
             "Hi, I'd like to schedule a diabetes follow-up with Dr. Patel next week",
         )
 
-        offered = await say(runtime, session, IDENTIFY)
+        offered = await identify(runtime, session)
+        assert offered.startswith("Thanks, John, you're verified.")
         assert "diabetes follow up" in offered
         assert "Dr. Sarah Patel" in offered
 
@@ -65,7 +75,12 @@ class TestDemoScenarios:
         self, runtime: Runtime, session: SessionState
     ) -> None:
         await say(runtime, session, "I forgot how much Metformin I'm supposed to take")
-        answer = await say(runtime, session, "I'm John Smith, date of birth 1985-02-15")
+        answer = await verify_by_conversation(
+            runtime.orchestrator,
+            session,
+            now=NOW,
+            lines=("I'm John Smith, date of birth 1985-02-15", "yes", "yes"),
+        )
 
         assert "One tablet twice daily with meals" in answer
         assert "prescription on file" in answer
@@ -91,33 +106,47 @@ class TestDemoScenarios:
 
     async def test_demo_4_reschedule(self, runtime: Runtime, session: SessionState) -> None:
         await say(runtime, session, "I need to move my appointment")
-        offered = await say(runtime, session, IDENTIFY)
+        offered = await identify(runtime, session)
         assert "I can move that to" in offered
         assert "Shall I go ahead" in await say(runtime, session, "the second one")
         assert "Done" in await say(runtime, session, "yes please")
 
-    async def test_demo_5_clinic_hours_need_no_verification(
-        self, runtime: Runtime, session: SessionState
-    ) -> None:
+    async def test_demo_5_clinic_hours_need_no_verification(self, ehr: EHRProvider) -> None:
+        """With ``identity_first_allow_faq`` on, a clinic question is answered first."""
+        runtime = build_runtime(
+            ehr=ehr,
+            settings=Settings(_env_file=None, app_env="test", identity_first_allow_faq=True),
+        )
+        session = runtime.sessions.create(channel=SessionChannel.TEXT)
         answer = await say(runtime, session, "Are you open on Saturday?")
         assert "closed on Saturday and Sunday" in answer
         assert session.is_verified is False
+
+    async def test_demo_5_by_default_the_question_waits_for_identity(
+        self, runtime: Runtime, session: SessionState
+    ) -> None:
+        """Off by default: asked first, answered the moment they are verified."""
+        assert "existing patient" in await say(runtime, session, "Are you open on Saturday?")
+        answer = await verify_by_conversation(runtime.orchestrator, session, now=NOW)
+        assert answer.startswith("Thanks, John, you're verified.")
+        assert "closed on Saturday and Sunday" in answer
 
     async def test_demo_6_failed_verification_escalates(
         self, runtime: Runtime, session: SessionState
     ) -> None:
         await say(runtime, session, "When is my appointment?")
-        first = await say(runtime, session, "I'm Jane Doe, born 1 January 1970")
-        second = await say(runtime, session, "Jane Doe, 01/01/1970")
+        attempt = ("I'm Jane Doe, born 1 January 1970", "yes", "yes")
+        first = await verify_by_conversation(runtime.orchestrator, session, now=NOW, lines=attempt)
+        second = await verify_by_conversation(runtime.orchestrator, session, now=NOW, lines=attempt)
         assert first == second  # identical, whatever was wrong
 
-        final = await say(runtime, session, "Jane Doe, born 1970-01-01")
+        final = await verify_by_conversation(runtime.orchestrator, session, now=NOW, lines=attempt)
         assert "front desk" in final
         assert runtime.escalations.store.for_session(session.session_id)
 
     async def test_refill_request_end_to_end(self, runtime: Runtime, session: SessionState) -> None:
         await say(runtime, session, "I need a refill on my metformin")
-        assert "Shall I do that" in await say(runtime, session, IDENTIFY)
+        assert "Shall I do that" in await identify(runtime, session)
         confirmation = await say(runtime, session, "yes please")
 
         assert "for review" in confirmation
@@ -143,7 +172,7 @@ class TestSafetyOrdering:
         self, runtime: Runtime, session: SessionState, ehr: EHRProvider
     ) -> None:
         await say(runtime, session, "I'd like to book a follow-up")
-        await say(runtime, session, IDENTIFY)
+        await identify(runtime, session)
 
         before = await SchedulingService(ehr).get_upcoming_appointments(JOHN_SMITH, now=NOW)
         result = await runtime.orchestrator.handle_turn(
@@ -164,6 +193,23 @@ class TestSafetyOrdering:
         assert result.trace.safety_category is SafetyCategory.URGENT_SYMPTOMS
         assert "911" in result.message
 
+    async def test_an_emergency_at_the_name_prompt_is_handled_first(
+        self, runtime: Runtime, session: SessionState
+    ) -> None:
+        """Identity is never in the way of an emergency.
+
+        The first thing every caller now hears is a request for their name. A
+        caller who answers it with "my husband has collapsed" gets the
+        emergency response, exactly as before identity came first.
+        """
+        result = await runtime.orchestrator.handle_turn(
+            session, "My husband has chest pain and can't breathe", now=NOW
+        )
+        assert result.trace.safety_category is SafetyCategory.URGENT_SYMPTOMS
+        assert "911" in result.message
+        assert result.trace.workflow is None
+        assert runtime.escalations.store.for_session(session.session_id)
+
     async def test_injection_does_not_reach_a_workflow(
         self, runtime: Runtime, session: SessionState
     ) -> None:
@@ -181,21 +227,24 @@ class TestTracing:
         self, runtime: Runtime, session: SessionState
     ) -> None:
         await say(runtime, session, "Are you open on Saturday?")
-        await say(runtime, session, "I'd like to book a follow-up")
+        await say(runtime, session, "John Smith")
 
         traces = runtime.traces.for_session(session.session_id)
         assert [t.turn_number for t in traces] == [1, 2]
         assert traces[0].intent is Intent.CLINIC_FAQ
-        assert traces[1].intent is Intent.BOOK_APPOINTMENT
+        assert [t.workflow for t in traces] == ["identity", "identity"]
+        assert [t.workflow_state for t in traces] == ["ASKING_STATUS", "CONFIRMING_NAME"]
 
     async def test_the_trace_captures_the_pipeline(
         self, runtime: Runtime, session: SessionState
     ) -> None:
         await say(runtime, session, "I forgot how much Metformin I'm supposed to take")
-        result = await runtime.orchestrator.handle_turn(session, IDENTIFY, now=NOW)
+        for line in VERIFY_JOHN_SMITH[:-1]:
+            await say(runtime, session, line)
+        result = await runtime.orchestrator.handle_turn(session, "yes", now=NOW)
         trace = result.trace
 
-        assert trace.utterance == IDENTIFY
+        assert trace.utterance == "yes"
         assert "One tablet twice daily with meals" in trace.response
         assert trace.safety_outcome is SafetyOutcome.ALLOW
         assert trace.workflow == "medication_lookup"
@@ -215,12 +264,29 @@ class TestTracing:
         assert entities["date_of_birth"] == "<redacted>"
         assert "John" not in str(entities)
         assert "1985" not in str(entities)
+        # And the read-back is in the response, not the trace's entities.
+        assert "J-O-H-N" in result.trace.response
+
+    async def test_spelled_letters_and_ambiguous_dates_are_redacted_too(
+        self, runtime: Runtime, session: SessionState
+    ) -> None:
+        await say(runtime, session, "John Smyth")
+        await say(runtime, session, "no")
+        spelled = await runtime.orchestrator.handle_turn(session, "S M I T H", now=NOW)
+        assert spelled.trace.entities["spelled"] == "<redacted>"
+        assert "SMITH" not in str(spelled.trace.entities)
+
+        await say(runtime, session, "yes")
+        ambiguous = await runtime.orchestrator.handle_turn(session, "03/04/1990", now=NOW)
+        assert ambiguous.trace.entities["date_of_birth_readings"] == "2"
+        assert "1990" not in str(ambiguous.trace.entities)
 
 
 class TestRouting:
     async def test_an_unrecognised_request_offers_the_menu_rather_than_guessing(
         self, runtime: Runtime, session: SessionState
     ) -> None:
+        await identify(runtime, session)
         result = await runtime.orchestrator.handle_turn(
             session, "the thing about the other thing", now=NOW
         )
@@ -233,7 +299,7 @@ class TestRouting:
     ) -> None:
         """ "Yes" mid-booking must not start a new booking."""
         await say(runtime, session, "I'd like to book a follow-up")
-        await say(runtime, session, IDENTIFY)
+        await identify(runtime, session)
         await say(runtime, session, "the first one")
 
         result = await runtime.orchestrator.handle_turn(session, "yes", now=NOW)
@@ -245,7 +311,7 @@ class TestRouting:
     ) -> None:
         """ "I'd like Tuesday" means one of the times just offered."""
         await say(runtime, session, "I'd like to book a follow-up")
-        offered = await say(runtime, session, IDENTIFY)
+        offered = await identify(runtime, session)
 
         traces = runtime.traces.for_session(session.session_id)
         # "2) Friday 11 September at 8:00 AM with ..." -> "Friday"

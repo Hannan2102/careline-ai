@@ -133,6 +133,64 @@ class TestValuesStayDeterministic:
         )
         assert result.date_of_birth == date(1985, 2, 15)
 
+    async def test_the_models_date_is_never_used_even_when_the_rules_found_none(self) -> None:
+        """It may say a date was offered. Which date is the parser's (ADR 008).
+
+        Formerly the model filled a date the rules missed. With dates now read
+        back to the caller that would be survivable, but the parser refusing a
+        date is a decision -- ambiguous, impossible, garbled -- and a model
+        overriding it would be guessing exactly where the parser declined to.
+        """
+        llm = FakeLLM('{"intent": "unknown", "date_of_birth": "1985-02-15", "dob_offered": true}')
+        result = await extractor(llm).aextract(
+            "it's the, um, fifteenth of the second, eighty-something",
+            ExtractionContext(awaiting=AwaitedInput.NAME),
+        )
+        assert result.date_of_birth is None
+        assert result.dob_offered is True
+
+    async def test_a_name_is_taken_from_the_model_only_when_one_was_asked_for(self) -> None:
+        reply = '{"intent": "unknown", "given_name": "john", "family_name": "smith"}'
+        asked = await extractor(FakeLLM(reply)).aextract(
+            "the booking should be under smith, john", ExtractionContext(awaiting=AwaitedInput.NAME)
+        )
+        assert asked.full_name == "John Smith"
+
+        unasked = await extractor(FakeLLM(reply)).aextract(
+            "my husband wants to know something", ExtractionContext()
+        )
+        assert unasked.full_name is None
+
+    async def test_a_name_that_is_not_shaped_like_one_is_dropped(self) -> None:
+        reply = '{"given_name": "the caller did not say", "family_name": null}'
+        result = await extractor(FakeLLM(reply)).aextract(
+            "can you hear me", ExtractionContext(awaiting=AwaitedInput.NAME)
+        )
+        assert result.full_name is None
+
+    async def test_letters_fill_a_spelling_the_rules_could_not_read(self) -> None:
+        llm = FakeLLM('{"spelled": "S-M-Y-T-H"}')
+        result = await extractor(llm).aextract(
+            "ess emm why tee aitch I think", ExtractionContext(awaiting=AwaitedInput.NAME_SPELLING)
+        )
+        assert llm.calls == 1
+        assert result.spelled == "SMYTH"
+
+    async def test_a_spelling_the_rules_read_costs_nothing(self) -> None:
+        llm = FakeLLM('{"spelled": "XXXX"}')
+        result = await extractor(llm).aextract(
+            "S M Y T H", ExtractionContext(awaiting=AwaitedInput.NAME_SPELLING)
+        )
+        assert llm.calls == 0
+        assert result.spelled == "SMYTH"
+
+    async def test_the_model_is_told_which_identity_question_was_asked(self) -> None:
+        llm = FakeLLM('{"confirm": true}')
+        await extractor(llm).aextract(
+            "mm, that'll do nicely", ExtractionContext(awaiting=AwaitedInput.NAME_CONFIRMATION)
+        )
+        assert "spelling of their name" in llm.prompts[-1]
+
     async def test_an_unreadable_date_costs_only_the_date(self) -> None:
         """One bad field must not discard the whole classification.
 
@@ -173,7 +231,7 @@ class TestWhenTheModelIsAskedAtAll:
         llm = FakeLLM('{"intent": "book_appointment"}')
         await extractor(llm).aextract(
             "fifteenth of February nineteen eighty five",
-            ExtractionContext(awaiting=AwaitedInput.IDENTITY),
+            ExtractionContext(awaiting=AwaitedInput.DATE_OF_BIRTH),
         )
         assert llm.calls == 0
 
@@ -242,7 +300,7 @@ class TestTheModelIsAskedMidConversation:
         llm = FakeLLM('{"intent": "book_appointment"}')
         await extractor(llm).aextract(
             "fifteenth of February nineteen eighty five",
-            ExtractionContext(awaiting=AwaitedInput.IDENTITY),
+            ExtractionContext(awaiting=AwaitedInput.DATE_OF_BIRTH),
         )
         assert llm.calls == 0
 

@@ -54,7 +54,7 @@ Creating a refill request is an agent action for the same reason as booking abov
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/api/agent/sessions` | Start a session |
+| `POST` | `/api/agent/sessions` | Start a session; returns it with the `greeting` that opens the call (ADR 010) |
 | `POST` | `/api/agent/sessions/{id}/turns` | Submit an utterance, receive a response + trace |
 | `GET` | `/api/agent/sessions/{id}` | Session state + full trace |
 

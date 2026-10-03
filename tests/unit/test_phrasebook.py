@@ -16,12 +16,12 @@ being misrouted into destroying an appointment, so each one is written down.
 from __future__ import annotations
 
 import pytest
-from tests.conftest import SEED_NOW
+from tests.conftest import SEED_NOW, verify_by_conversation
 
 from app.agents.extraction import ExtractionContext, RuleBasedExtractor
 from app.agents.factory import build_runtime
 from app.agents.intents import Intent
-from app.agents.orchestrator import FALLBACK_MESSAGE, Orchestrator
+from app.agents.orchestrator import ASK_STATUS_AGAIN, FALLBACK_MESSAGE, Orchestrator
 from app.agents.state import SessionState
 from app.config.clinic import FAQ_TOPIC_ALIASES
 from app.config.settings import Settings
@@ -317,16 +317,27 @@ class TestNothingDeadEnds:
         assert result.message != FALLBACK_MESSAGE
 
     @pytest.mark.parametrize("utterance", NO_INTENT)
-    async def test_an_opening_pleasantry_gets_the_menu(
+    async def test_an_opening_pleasantry_gets_the_opening_question_again(
         self, orchestrator: Orchestrator, utterance: str
     ) -> None:
-        """The right answer to "hello?" is what the agent can do.
+        """The greeting asked whether they are a patient (ADR 010); "hello?" did not say.
 
-        The most common first utterance now that the agent greets first --
-        people answer a greeting with a greeting -- so it matters that this
-        stays a real answer rather than becoming a guess at a workflow.
+        The most common first utterance, because people answer a greeting with
+        a greeting. Nothing is guessed from it -- not a name, not a workflow --
+        and the question comes back as an easier yes-or-no.
         """
         session = SessionState(session_id="sess-phrase", created_at=SEED_NOW)
+        result = await orchestrator.handle_turn(session, utterance, now=SEED_NOW)
+        assert result.message == ASK_STATUS_AGAIN
+        assert result.trace.entities.get("full_name") is None
+
+    @pytest.mark.parametrize("utterance", NO_INTENT)
+    async def test_after_identity_a_pleasantry_gets_the_menu(
+        self, orchestrator: Orchestrator, utterance: str
+    ) -> None:
+        """Once verified, the right answer to "hello?" is what the agent can do."""
+        session = SessionState(session_id="sess-phrase", created_at=SEED_NOW)
+        await verify_by_conversation(orchestrator, session, now=SEED_NOW)
         result = await orchestrator.handle_turn(session, utterance, now=SEED_NOW)
         assert result.message == FALLBACK_MESSAGE
 

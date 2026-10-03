@@ -102,3 +102,20 @@ class TestCloudProvidersCannotBeReachedInTests:
         assert settings.stt_enabled is False
         assert settings.tts_enabled is False
         assert settings.can_spend_money is False
+
+
+class TestHostedDatabaseUrls:
+    """Render gives ``postgresql://``; the async engine needs ``+asyncpg``."""
+
+    def test_a_hosted_url_gets_the_async_driver(self) -> None:
+        from app.config.settings import Settings
+
+        for given in ("postgres://u:p@h:5432/db", "postgresql://u:p@h:5432/db"):
+            settings = Settings(_env_file=None, database_url=given)
+            assert settings.database_url == "postgresql+asyncpg://u:p@h:5432/db"
+
+    def test_a_url_with_a_driver_is_left_alone(self) -> None:
+        from app.config.settings import Settings
+
+        for given in ("postgresql+asyncpg://u:p@h/db", "sqlite+aiosqlite:///./x.db"):
+            assert Settings(_env_file=None, database_url=given).database_url == given

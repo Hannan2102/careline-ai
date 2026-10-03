@@ -27,7 +27,7 @@ export default function CallsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold">Calls</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-strong">Calls</h1>
         <p className="mt-1 text-sm text-muted">
           Every conversation the agent has handled, newest first. Open one to see the full
           per-turn trace.

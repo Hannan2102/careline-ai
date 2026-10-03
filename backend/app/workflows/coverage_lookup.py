@@ -93,7 +93,7 @@ class CoverageLookupWorkflow:
                 WorkflowStatus.AWAITING_INPUT,
                 "I can check what we have on file once I've confirmed who you are. "
                 + IdentityCollector.ask().message,
-                awaiting=AwaitedInput.IDENTITY,
+                awaiting=AwaitedInput.NAME,
             )
         # Already verified, so there is nothing to ask. Both branches used to
         # ask anyway -- and because responding writes the state back, this one

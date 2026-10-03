@@ -12,7 +12,7 @@ from enum import StrEnum
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -63,9 +63,33 @@ class Settings(BaseSettings):
 
     # --- Persistence -----------------------------------------------------
     database_url: str = "sqlite+aiosqlite:///./careline.db"
+
+    @field_validator("database_url")
+    @classmethod
+    def _use_the_async_driver(cls, value: str) -> str:
+        """Hosts hand out ``postgres://`` URLs; SQLAlchemy's async engine needs the driver.
+
+        Render (and Heroku before it) give the database as ``postgresql://`` or
+        ``postgres://``, which the async engine rejects at startup. Rewriting it
+        here means the URL can be pasted in exactly as the host gives it.
+        """
+        for prefix in ("postgres://", "postgresql://"):
+            if value.startswith(prefix):
+                return "postgresql+asyncpg://" + value[len(prefix) :]
+        return value
+
     #: Off in tests unless a database is explicitly provided; on by default so
     #: the audit trail and usage ledger survive a restart in normal use.
     persistence_enabled: bool = True
+
+    # --- Call flow -------------------------------------------------------
+    #: Every call opens by taking and confirming the caller's identity (ADR
+    #: 010). With this on, an opening question that is plainly about the clinic
+    #: -- hours, address, parking -- is answered first, without a name, because
+    #: nothing on the record is involved. Off by default: one opening for every
+    #: caller is simpler to reason about, and the FAQ answer still comes once
+    #: they are verified.
+    identity_first_allow_faq: bool = False
 
     # --- EHR -------------------------------------------------------------
     ehr_provider: EHRProviderName = EHRProviderName.MEMORY

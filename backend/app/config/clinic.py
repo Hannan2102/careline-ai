@@ -30,10 +30,17 @@ CLINIC_DISPLAY_NAME = "CareLine AI at Oakwood Family Medicine"
 #: It says it is automated. That is not decoration: a caller who believes they
 #: reached a person will ask a person's questions, and being told afterwards is
 #: worse than being told now.
+#:
+#: It ends by asking whether the caller is already a patient, not "how can I
+#: help?" (ADR 010). Every call that does anything needs identity first, and
+#: the two answers lead to different identity steps -- verification against
+#: the record, or registration. Asking up front means a new patient is never
+#: put through a verification they cannot pass, and an existing one is never
+#: asked whether they are new.
 GREETING = (
     f"Thank you for calling {CLINIC_NAME}. "
     "You're speaking with CareLine, an automated assistant. "
-    "How can I help you today?"
+    "Are you an existing patient, or are you new and would like to register?"
 )
 
 #: Monday=0 ... Sunday=6. Closed days are simply absent.

@@ -135,11 +135,11 @@ export function TurnCard({ turn }: { turn: TurnDetail }) {
 
       <div className="space-y-4 p-4">
         <div className="grid gap-3 lg:grid-cols-2">
-          <div className="rounded border border-edge/60 bg-ink/40 p-3">
+          <div className="rounded border border-edge/60 bg-ink p-3">
             <div className="text-xs uppercase tracking-wider text-muted">Caller said</div>
             <p className="mt-1 text-sm">{turn.utterance}</p>
           </div>
-          <div className="rounded border border-edge/60 bg-ink/40 p-3">
+          <div className="rounded border border-edge/60 bg-ink p-3">
             <div className="text-xs uppercase tracking-wider text-muted">Agent replied</div>
             <p className="mt-1 text-sm whitespace-pre-wrap">{turn.response}</p>
           </div>

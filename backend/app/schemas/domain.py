@@ -304,6 +304,11 @@ class AuditAction(StrEnum):
     VERIFICATION_ATTEMPTED = "verification.attempted"
     VERIFICATION_SUCCEEDED = "verification.succeeded"
     VERIFICATION_FAILED = "verification.failed"
+    #: The caller said a name or date of birth read back to them was wrong, or
+    #: could not be understood. Not a verification failure -- nothing was
+    #: checked against a record -- but three of them hand the call to a person,
+    #: and that handover should be explainable from the trail (ADR 010).
+    IDENTITY_NOT_CONFIRMED = "identity.not_confirmed"
     APPOINTMENTS_READ = "appointment.read"
     APPOINTMENT_BOOKED = "appointment.booked"
     APPOINTMENT_CANCELLED = "appointment.cancelled"

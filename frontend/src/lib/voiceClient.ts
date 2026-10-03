@@ -45,6 +45,8 @@ export interface VoiceClientEvents {
    */
   onNotice(detail: string): void;
   onTranscript(text: string, isFinal: boolean): void;
+  /** What the agent is saying, written form ("J-O-H-N" rather than "J, O, H, N"). */
+  onAgent?(text: string): void;
   onInterrupt(): void;
   onClosed(reason: string): void;
 }
@@ -176,6 +178,9 @@ export class VoiceClient {
         return;
       case "transcript":
         this.events.onTranscript(String(message.text), Boolean(message.is_final));
+        return;
+      case "agent":
+        this.events.onAgent?.(String(message.text ?? ""));
         return;
       case "interrupt":
         // The whole point. Everything already scheduled is now stale.

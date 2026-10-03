@@ -37,10 +37,18 @@ from app.voice.turn_manager import TurnTimings
 
 OUT = Path("smoke_voice.wav")
 
+#: The identity-first opening (ADR 010), because it is the one part of a call
+#: whose *pronunciation* matters: the name is spelled back letter by letter,
+#: and whether the speech engine reads "J. O. H. N" as four letters or as a
+#: word can only be heard. Listen for each letter of J-O-H-N and S-M-I-T-H
+#: said separately, and for "A" and "O" said as letters rather than as "uh"
+#: and "oh!" -- then record what you heard in spelling.spell_for_speech.
 SCRIPT = [
     "Hi, I'd like to book an appointment",
     "My name is John Smith",
-    "I was born on the fourteenth of March nineteen seventy eight",
+    "yes",
+    "the fifteenth of February nineteen eighty five",
+    "yes",
 ]
 
 

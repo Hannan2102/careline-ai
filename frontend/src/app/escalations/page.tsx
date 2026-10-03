@@ -35,7 +35,7 @@ export default function EscalationsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold">Escalations</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-strong">Escalations</h1>
         <p className="mt-1 text-sm text-muted">
           Everything the agent handed to a human, with the context staff need so the patient is
           not asked to start again.
@@ -67,7 +67,7 @@ export default function EscalationsPage() {
                 {rows.map((escalation) => (
                   <li
                     key={escalation.escalation_id}
-                    className="rounded border border-edge/60 bg-ink/40 p-3"
+                    className="rounded border border-edge/60 bg-ink p-3"
                   >
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge tone={PRIORITY_TONE[escalation.priority] ?? "neutral"}>

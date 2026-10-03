@@ -94,7 +94,7 @@ class RefillRequestWorkflow:
                 WorkflowStatus.AWAITING_INPUT,
                 "I can send that request once I've confirmed who you are. "
                 + IdentityCollector.ask().message,
-                awaiting=AwaitedInput.IDENTITY,
+                awaiting=AwaitedInput.NAME,
             )
         return self._respond(
             session,

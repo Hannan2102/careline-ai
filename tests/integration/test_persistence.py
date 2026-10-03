@@ -11,6 +11,7 @@ from decimal import Decimal
 
 import pytest
 from sqlalchemy import select
+from tests.conftest import verify_by_conversation
 
 from app.agents.factory import Runtime, build_runtime
 from app.ai.usage import OUTPUT_TOKENS, UsageLedger
@@ -32,7 +33,8 @@ from app.db.repositories import (
 from app.ehr.base import EHRProvider
 from app.schemas.domain import RefillStatus
 
-IDENTIFY = "My name is John Smith and I was born 15 February 1985"
+#: Name and date of birth in one breath, then yes to each read-back (ADR 010).
+IDENTIFY = ("My name is John Smith and I was born 15 February 1985", "yes", "yes")
 
 
 @pytest.fixture
@@ -50,9 +52,12 @@ def ledger() -> UsageLedger:
 
 @pytest.fixture
 def runtime(ehr: EHRProvider, database: Database, ledger: UsageLedger) -> Runtime:
+    # Clinic questions before identity, because "Are you open on Saturday?" is
+    # this file's one-turn fixture and what is under test is the write, not
+    # the identity-first opening (ADR 010).
     return build_runtime(
         ehr=ehr,
-        settings=Settings(_env_file=None, app_env="test"),
+        settings=Settings(_env_file=None, app_env="test", identity_first_allow_faq=True),
         ledger=ledger,
         database=database,
     )
@@ -100,13 +105,13 @@ class TestTurnPersistence:
     ) -> None:
         session = runtime.sessions.create()
         await runtime.orchestrator.handle_turn(session, "When is my appointment?")
-        await runtime.orchestrator.handle_turn(session, IDENTIFY)
+        await verify_by_conversation(runtime.orchestrator, session, now=None, lines=IDENTIFY)
 
         async with database.session() as db:
             row = (await db.execute(select(SessionRow))).scalar_one()
             assert row.verification == "VERIFIED"
             assert row.patient_ref == "Patient/demo-john-smith"
-            assert row.turn_count == 2
+            assert row.turn_count == 4
 
     async def test_turns_accumulate_in_order(self, runtime: Runtime, database: Database) -> None:
         session = runtime.sessions.create()
@@ -177,7 +182,7 @@ class TestTurnPersistence:
         """The utterance is the patient's own words; the entity map is not a copy of them."""
         session = runtime.sessions.create()
         await runtime.orchestrator.handle_turn(session, "When is my appointment?")
-        await runtime.orchestrator.handle_turn(session, IDENTIFY)
+        await verify_by_conversation(runtime.orchestrator, session, now=None, lines=IDENTIFY)
 
         async with database.session() as db:
             rows = (await db.execute(select(TurnRow))).scalars().all()
@@ -194,7 +199,7 @@ class TestAuditPersistence:
         await runtime.orchestrator.handle_turn(
             session, "I forgot how much Metformin I'm supposed to take"
         )
-        await runtime.orchestrator.handle_turn(session, IDENTIFY)
+        await verify_by_conversation(runtime.orchestrator, session, now=None, lines=IDENTIFY)
 
         async with database.session() as db:
             actions = [
@@ -210,7 +215,7 @@ class TestAuditPersistence:
         await runtime.orchestrator.handle_turn(
             session, "I forgot how much Metformin I'm supposed to take"
         )
-        await runtime.orchestrator.handle_turn(session, IDENTIFY)
+        await verify_by_conversation(runtime.orchestrator, session, now=None, lines=IDENTIFY)
 
         async with database.session() as db:
             rows = (await db.execute(select(AuditEventRow))).scalars().all()
@@ -253,7 +258,7 @@ class TestRefillPersistence:
     ) -> None:
         session = runtime.sessions.create()
         await runtime.orchestrator.handle_turn(session, "I need a refill on my metformin")
-        await runtime.orchestrator.handle_turn(session, IDENTIFY)
+        await verify_by_conversation(runtime.orchestrator, session, now=None, lines=IDENTIFY)
         await runtime.orchestrator.handle_turn(session, "yes please")
 
         async with database.session() as db:

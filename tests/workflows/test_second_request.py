@@ -28,7 +28,8 @@ from app.agents.state import SessionState
 from app.config.settings import Settings
 from app.ehr.base import EHRProvider
 
-IDENTIFY = f"John Smith, born {JOHN_SMITH_DOB:%d %B %Y}"
+#: Name and date of birth in one breath, then yes to each read-back (ADR 010).
+IDENTIFY = (f"John Smith, born {JOHN_SMITH_DOB:%d %B %Y}", "yes", "yes")
 
 
 @pytest.fixture
@@ -66,7 +67,7 @@ class TestASecondRequestIsHeard:
             orchestrator,
             verified,
             "I need to see someone",
-            IDENTIFY,
+            *IDENTIFY,
             "The first one, please",
             "Yes",
         )
@@ -86,7 +87,7 @@ class TestASecondRequestIsHeard:
         self, orchestrator: Orchestrator, verified: SessionState
     ) -> None:
         """Two requests through the same workflow, back to back."""
-        first = await say(orchestrator, verified, "When is my appointment?", IDENTIFY)
+        first = await say(orchestrator, verified, "When is my appointment?", *IDENTIFY)
         assert "Your next appointment" in first or "which one" in first.lower()
 
         second = await say(orchestrator, verified, "I need to cancel it")
@@ -95,7 +96,7 @@ class TestASecondRequestIsHeard:
     async def test_a_second_medication_question(
         self, orchestrator: Orchestrator, verified: SessionState
     ) -> None:
-        await say(orchestrator, verified, "What does my prescription say?", IDENTIFY)
+        await say(orchestrator, verified, "What does my prescription say?", *IDENTIFY)
         answered = await say(orchestrator, verified, "How much metformin do I take?")
         assert "Metformin" in answered
         assert answered != FALLBACK_MESSAGE
@@ -104,7 +105,7 @@ class TestASecondRequestIsHeard:
         self, orchestrator: Orchestrator, verified: SessionState
     ) -> None:
         """Different workflows, and the second one must not re-verify."""
-        await say(orchestrator, verified, "What does my prescription say?", IDENTIFY)
+        await say(orchestrator, verified, "What does my prescription say?", *IDENTIFY)
         refill = await say(orchestrator, verified, "I'm running low on my metformin")
         assert "date of birth" not in refill.lower(), "asked a verified caller to verify again"
 
@@ -133,7 +134,7 @@ class TestAVerifiedCallerIsNotAskedAgain:
         opening: str,
         expected_absent: str,
     ) -> None:
-        await say(orchestrator, verified, "When is my appointment?", IDENTIFY)
+        await say(orchestrator, verified, "When is my appointment?", *IDENTIFY)
         assert verified.is_verified
 
         answer = await say(orchestrator, verified, opening)
@@ -152,7 +153,7 @@ class TestTheOldRequestIsNotReused:
         ended. After a cancellation it names something that no longer exists,
         and a workflow that kept it would cheerfully offer to cancel it twice.
         """
-        await say(orchestrator, verified, "I need to cancel my appointment", IDENTIFY)
+        await say(orchestrator, verified, "I need to cancel my appointment", *IDENTIFY)
         confirmed = await say(orchestrator, verified, "Yes")
         assert "cancelled" in confirmed.lower()
 

@@ -9,6 +9,11 @@ Deepgram's `smart_format` is deliberately not used to solve this: it emits US
 ordering ("03/04/1978"), which is indistinguishable from 3 April to a parser
 that has to guess, and it mangles bare years. The spoken form is unambiguous,
 so it is kept and resolved here.
+
+The parsing itself lives in ``dob_parser.py`` and is tested exhaustively in
+``test_dob_parser.py``. These tests are about the extractor's use of it: that a
+date reaches ``date_of_birth``, that two readings reach ``dob_candidates``
+instead, and that dates and names do not get mistaken for each other.
 """
 
 from __future__ import annotations
@@ -23,6 +28,15 @@ from app.agents.extraction import (
     _spoken_numbers_to_digits,
 )
 from app.workflows.base import AwaitedInput
+
+TODAY = date(2026, 10, 1)
+
+
+def date_of_birth(text: str) -> date | None:
+    extractor = RuleBasedExtractor(today=lambda: TODAY)
+    return extractor.extract(
+        text, ExtractionContext(awaiting=AwaitedInput.DATE_OF_BIRTH)
+    ).date_of_birth
 
 
 class TestSpokenDates:
@@ -48,15 +62,34 @@ class TestSpokenDates:
         ],
     )
     def test_spoken_dates_parse(self, spoken: str, expected: date) -> None:
-        assert RuleBasedExtractor._date_of_birth(spoken) == expected
+        assert date_of_birth(spoken) == expected
 
     @pytest.mark.parametrize(
         "written",
-        ["15 February 1985", "1985-02-15", "February 15, 1985", "15/02/1985"],
+        ["15 February 1985", "1985-02-15", "February 15, 1985", "15/02/1985", "02/15/1985"],
     )
     def test_written_dates_still_parse(self, written: str) -> None:
-        """The digit paths must not regress: text mode is the primary surface."""
-        assert RuleBasedExtractor._date_of_birth(written) == date(1985, 2, 15)
+        """The digit paths must not regress: text mode is the primary surface.
+
+        "15/02/1985" still parses, but no longer because the old parser was
+        told to read day-first: it is the only reading in which 15 is a valid
+        day *and* 02 a valid month. Day-first was removed because it decided
+        "03/04/1990" silently -- see the next test.
+        """
+        assert date_of_birth(written) == date(1985, 2, 15)
+
+    def test_day_and_month_both_twelve_or_under_are_not_picked(self) -> None:
+        """Formerly 3 April, by the old ``dayfirst=True``. Now both, to be asked about.
+
+        A US clinic's callers mean 4 March by "03/04/1990" far more often than
+        3 April, and the old parser chose the other one without a word -- so
+        the date the agent submitted was one the caller had not said.
+        """
+        extracted = RuleBasedExtractor(today=lambda: TODAY).extract(
+            "03/04/1990", ExtractionContext(awaiting=AwaitedInput.DATE_OF_BIRTH)
+        )
+        assert extracted.date_of_birth is None
+        assert extracted.dob_candidates == (date(1990, 3, 4), date(1990, 4, 3))
 
     @pytest.mark.parametrize(
         "utterance",
@@ -70,7 +103,7 @@ class TestSpokenDates:
     )
     def test_utterances_without_a_date_yield_none(self, utterance: str) -> None:
         """A number-word rewriter that is too eager starts inventing dates."""
-        assert RuleBasedExtractor._date_of_birth(utterance) is None
+        assert date_of_birth(utterance) is None
 
     def test_number_words_become_digits_without_losing_the_words_between(self) -> None:
         assert (
@@ -103,7 +136,7 @@ class TestADateIsNotAName:
 
     @pytest.fixture
     def asked_for_identity(self) -> ExtractionContext:
-        return ExtractionContext(awaiting=AwaitedInput.IDENTITY)
+        return ExtractionContext(awaiting=AwaitedInput.NAME)
 
     @pytest.mark.parametrize(
         ("spoken", "expected"),
@@ -125,7 +158,7 @@ class TestADateIsNotAName:
     def test_a_date_alone_yields_a_date_and_no_name(
         self, asked_for_identity: ExtractionContext, spoken: str, expected: date
     ) -> None:
-        extracted = RuleBasedExtractor().extract(spoken, asked_for_identity)
+        extracted = RuleBasedExtractor(today=lambda: TODAY).extract(spoken, asked_for_identity)
         assert extracted.date_of_birth == expected
         assert extracted.full_name is None, (
             f"claimed {extracted.full_name!r} as a name; it would overwrite the real one"
@@ -189,7 +222,7 @@ class TestSpokenDigits:
     def test_digits_are_only_read_when_they_were_asked_for(self) -> None:
         """ "I was born in nineteen ninety" is not a second factor."""
         extracted = RuleBasedExtractor().extract(
-            "zero four one one", ExtractionContext(awaiting=AwaitedInput.IDENTITY)
+            "zero four one one", ExtractionContext(awaiting=AwaitedInput.NAME)
         )
         assert extracted.second_factor_value is None
 
@@ -199,7 +232,7 @@ class TestAbbreviatedMonths:
 
     @pytest.fixture
     def asked_for_identity(self) -> ExtractionContext:
-        return ExtractionContext(awaiting=AwaitedInput.IDENTITY)
+        return ExtractionContext(awaiting=AwaitedInput.NAME)
 
     @pytest.mark.parametrize(
         ("spoken", "expected"),
@@ -219,7 +252,8 @@ class TestAbbreviatedMonths:
     def test_a_shortened_month_still_parses(
         self, asked_for_identity: ExtractionContext, spoken: str, expected: date
     ) -> None:
-        assert RuleBasedExtractor().extract(spoken, asked_for_identity).date_of_birth == expected
+        extractor = RuleBasedExtractor(today=lambda: TODAY)
+        assert extractor.extract(spoken, asked_for_identity).date_of_birth == expected
 
 
 class TestAStrayOrdinalBeforeAName:
@@ -231,7 +265,7 @@ class TestAStrayOrdinalBeforeAName:
 
     @pytest.fixture
     def asked_for_identity(self) -> ExtractionContext:
-        return ExtractionContext(awaiting=AwaitedInput.IDENTITY)
+        return ExtractionContext(awaiting=AwaitedInput.NAME)
 
     @pytest.mark.parametrize(
         ("heard", "expected"),

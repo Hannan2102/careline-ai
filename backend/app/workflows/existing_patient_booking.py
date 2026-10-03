@@ -41,7 +41,7 @@ from app.workflows.base import (
     WorkflowStatus,
     begin_request,
 )
-from app.workflows.identity import IdentityCollector, IdentityOutcome
+from app.workflows.identity import ASK_NAME, IdentityCollector, IdentityOutcome
 
 logger = get_logger(__name__)
 
@@ -123,6 +123,7 @@ class ExistingPatientBookingWorkflow:
         self._begin_request(session, memory)
         if appointment_type is not None:
             memory.set("appointment_type", appointment_type.value)
+            memory.set("type_preset", True)
         return self._prompt_for_current_state(session)
 
     async def advance(
@@ -213,7 +214,7 @@ class ExistingPatientBookingWorkflow:
             if result.outcome is IdentityOutcome.NEEDS_SECOND_FACTOR
             else BookingState.COLLECTING_IDENTITY,
             result.message,
-            result.awaiting or AwaitedInput.IDENTITY,
+            result.awaiting or AwaitedInput.NAME,
         )
 
     async def _handle_second_factor(
@@ -249,10 +250,24 @@ class ExistingPatientBookingWorkflow:
     async def _handle_reason(
         self, session: SessionState, turn: BookingInput, now: datetime
     ) -> WorkflowResponse:
-        if self._memory(session).get("appointment_type") is None:
+        memory = self._memory(session)
+        if memory.get("appointment_type") is None:
             return self._awaiting(
                 session,
                 BookingState.COLLECTING_REASON,
+                "What would you like to be seen about?",
+                AwaitedInput.REASON,
+            )
+        if memory.get("type_preset") and not memory.get("reason_asked"):
+            # A first visit's length is already decided, so no reason is needed
+            # to choose the slot -- but the visit note still wants one, and
+            # "I'd like to book an appointment" is not it. Asked once.
+            memory.set("reason_asked", True)
+            memory.set("reason", None)
+            return self._awaiting(
+                session,
+                BookingState.COLLECTING_REASON,
+                "Happy to. As it's your first visit it'll be a longer appointment. "
                 "What would you like to be seen about?",
                 AwaitedInput.REASON,
             )
@@ -562,8 +577,8 @@ class ExistingPatientBookingWorkflow:
         state = BookingState(memory.get("state", BookingState.COLLECTING_IDENTITY.value))
         prompts: dict[BookingState, tuple[str, AwaitedInput | None, WorkflowStatus]] = {
             BookingState.COLLECTING_IDENTITY: (
-                "I can help with that. Could I take your full name and date of birth?",
-                AwaitedInput.IDENTITY,
+                "I can help with that. " + ASK_NAME,
+                AwaitedInput.NAME,
                 WorkflowStatus.AWAITING_INPUT,
             ),
             BookingState.AWAITING_SECOND_FACTOR: (

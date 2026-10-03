@@ -14,7 +14,8 @@ Wire protocol, deliberately small:
 * client -> server: binary frames of 16 kHz mono 16-bit PCM; JSON ``{"type":
   "hangup"}`` to end the call.
 * server -> client: binary frames of 24 kHz mono 16-bit PCM; JSON events for
-  ``ready``, ``transcript``, ``interrupt`` and ``closed``.
+  ``ready``, ``transcript``, ``agent`` (what the agent is saying, written
+  form), ``interrupt`` and ``closed``.
 
 ``interrupt`` is the one that is easy to leave out and impossible to fake.
 Cancelling synthesis server-side stops us *producing* audio, but whatever
@@ -160,9 +161,15 @@ async def voice_socket(websocket: WebSocket) -> None:
             },
         )
 
+    async def said(text: str) -> None:
+        # The written form, as the transcript and dashboard show it, so the
+        # page reads "J-O-H-N" while the caller hears each letter.
+        await _send_json(websocket, send_lock, {"type": "agent", "text": text})
+
     voice = VoiceSession(
         session=session,
         orchestrator=runtime.orchestrator,
+        on_say=said,
         stt=_TranscriptRelay(stt, relay),
         tts=tts,
         audio_out=audio_out,
@@ -204,7 +211,10 @@ async def voice_socket(websocket: WebSocket) -> None:
         with contextlib.suppress(Exception):
             await runtime.end_session(session.session_id)
         if websocket.client_state is WebSocketState.CONNECTED:
-            await websocket.close(code=1000)
+            # The caller hanging up can close the socket between the check and
+            # the close; the call is over either way.
+            with contextlib.suppress(RuntimeError):
+                await websocket.close(code=1000)
         logger.info(
             "voice_socket_closed",
             session_id=session.session_id,

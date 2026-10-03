@@ -71,3 +71,25 @@ class TestRestraint:
         """Matching is whole-word, so a real surname is not mangled."""
         assert for_speech("Andrew Drive") == "Andrew Drive"
         assert for_speech("Drury Lane") == "Drury Lane"
+
+
+class TestSpelledNames:
+    """A spell-back must reach the speech engine as letters, not as a word."""
+
+    def test_a_hyphen_spelled_name_is_read_letter_by_letter(self) -> None:
+        written = (
+            "Thanks. I have your first name as J-O-H-N and your last name as S-M-I-T-H. "
+            "Is that right?"
+        )
+        assert for_speech(written) == (
+            "Thanks. I have your first name as J, O, H, N and your last name as "
+            "S, M, I, T, H. Is that right?"
+        )
+
+    def test_a_name_with_an_apostrophe(self) -> None:
+        assert for_speech("your last name as O, apostrophe, B, R, I, E, N.") == (
+            "your last name as O, apostrophe, B, R, I... E, N."
+        )
+
+    def test_ordinary_hyphenated_words_are_untouched(self) -> None:
+        assert for_speech("a follow-up X-ray") == "a follow-up X-ray"

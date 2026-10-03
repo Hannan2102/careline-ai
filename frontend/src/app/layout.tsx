@@ -1,24 +1,24 @@
 import type { Metadata } from "next";
-import { NavBar, SyntheticBanner } from "@/components/Chrome";
+import { Inter } from "next/font/google";
+import { Footer, NavBar, SyntheticBanner } from "@/components/Chrome";
 import "./globals.css";
 
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
+
 export const metadata: Metadata = {
-  title: "CareLine AI — admin dashboard",
+  title: "CareLine AI — Oakwood Family Medicine",
   description:
-    "Operations view for the CareLine AI patient-access agent. Synthetic data only.",
+    "Talk to CareLine, an AI patient-access line, and see every turn it takes. Synthetic data only.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className="min-h-screen antialiased">
+    <html lang="en" className={inter.variable}>
+      <body className="flex min-h-screen flex-col font-sans antialiased">
         <SyntheticBanner />
         <NavBar />
-        <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
-        <footer className="mx-auto max-w-7xl px-4 pb-10 text-xs text-muted">
-          CareLine AI is a portfolio demonstration. It does not give medical advice, and it
-          never authorises a prescription refill — a request is queued for a clinician.
-        </footer>
+        <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8">{children}</main>
+        <Footer />
       </body>
     </html>
   );

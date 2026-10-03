@@ -109,7 +109,7 @@ class MedicationLookupWorkflow:
                 WorkflowStatus.AWAITING_INPUT,
                 "I can look that up once I've confirmed who you are. "
                 + IdentityCollector.ask().message,
-                awaiting=AwaitedInput.IDENTITY,
+                awaiting=AwaitedInput.NAME,
             )
         return self._ask_which_medication(session)
 

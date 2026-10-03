@@ -87,9 +87,14 @@ measure-tts: ## Time to first audio from the live speech provider (a few cents)
 	@echo "Phase 14 before/after. Add ARGS=--rest to compare against the REST path."
 	TEXT_ONLY_MODE=false TTS_ENABLED=true $(PY) scripts/measure_tts.py $(ARGS)
 
-smoke-voice: ## Drive one whole voice call and save the audio to listen to (free)
-	@echo "Scripted speech in, real Groq speech out. Play smoke_voice.wav afterwards."
-	TEXT_ONLY_MODE=false TTS_ENABLED=true TTS_PROVIDER=groq \
+#: Which speech engine smoke-voice uses. Groq is free; SMOKE_TTS=deepgram
+#: checks Aura -- the production voice, and the one whose letter-by-letter
+#: reading of a spelled name has to be heard to be trusted (a fraction of a cent).
+SMOKE_TTS ?= groq
+
+smoke-voice: ## Drive one whole voice call and save the audio to listen to (free; SMOKE_TTS=deepgram for Aura)
+	@echo "Scripted speech in, real $(SMOKE_TTS) speech out. Play smoke_voice.wav afterwards."
+	TEXT_ONLY_MODE=false TTS_ENABLED=true TTS_PROVIDER=$(SMOKE_TTS) \
 	  STT_ENABLED=true STT_PROVIDER=mock $(PY) scripts/smoke_voice.py
 
 smoke-cloud: ## ONE live paid call to verify a cloud adapter (costs money)

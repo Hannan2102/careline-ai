@@ -65,8 +65,12 @@ class Speaker:
 
 @pytest.fixture
 def orchestrator(memory_ehr: EHRProvider) -> Orchestrator:
+    # Clinic questions before identity: "Are you open on Saturday?" is this
+    # file's standard one-turn exchange, and turn-taking is what is under test
+    # here, not the identity-first opening (ADR 010).
     return build_runtime(
-        ehr=memory_ehr, settings=Settings(_env_file=None, app_env="test")
+        ehr=memory_ehr,
+        settings=Settings(_env_file=None, app_env="test", identity_first_allow_faq=True),
     ).orchestrator
 
 
@@ -311,7 +315,7 @@ class TestOurOwnSpeechIsNotTheCallersSilence:
         """The offer message is the first reply long enough to exceed both
         thresholds on its own, which is why the call died exactly there."""
         now = T0
-        for line in ["I need to book an appointment", "My name is John Smith", IDENTIFY]:
+        for line in ["I need to book an appointment", IDENTIFY, "yes", "yes"]:
             now = await self._turn(manager, slow_speaker, line, now)
 
         offer = slow_speaker.said[-1]
@@ -329,7 +333,7 @@ class TestOurOwnSpeechIsNotTheCallersSilence:
     ) -> None:
         """Not merely delayed -- the whole budget, counted from the end."""
         now = T0
-        for line in ["I need to book an appointment", "My name is John Smith", IDENTIFY]:
+        for line in ["I need to book an appointment", IDENTIFY, "yes", "yes"]:
             now = await self._turn(manager, slow_speaker, line, now)
 
         await manager.tick(now=now + timedelta(milliseconds=100))  # re-anchors here
@@ -403,6 +407,9 @@ class SlowOrchestrator:
     def __init__(self) -> None:
         self.release = asyncio.Event()
         self.utterances: list[str] = []
+
+    def expects_dictation(self, session: SessionState) -> bool:
+        return False
 
     async def handle_turn(
         self, session: SessionState, utterance: str, now: datetime | None = None
@@ -483,6 +490,8 @@ class TestVoiceChangesNoBusinessLogic:
         script = [
             "Hi, I'd like to schedule a diabetes follow-up with Dr. Patel next week",
             IDENTIFY,
+            "yes",
+            "yes",
             "The first one please",
             "Yes",
         ]
@@ -491,7 +500,7 @@ class TestVoiceChangesNoBusinessLogic:
             await say(manager, utterance, moment)
             moment += timedelta(seconds=5)
 
-        assert manager.stats.turns == 4
+        assert manager.stats.turns == 6
         assert manager.session.is_verified
         assert "booked" in speaker.said[-1].lower()
 
@@ -575,3 +584,59 @@ class TestSpeakingFirst:
         await manager.tick(now=T0 + timedelta(seconds=16))
 
         assert speaker.said[-1] == "Are you still there?"
+
+
+class TestDictationIsNotCutOffAtEachPause:
+    """Found on the first live call after identity came first.
+
+    The caller was asked to spell a surname and paused between letters, as
+    everyone does. Deepgram reported end-of-speech at each pause, so "H-A-N …
+    N-A-N" became two turns: the agent spelled back a three-letter surname,
+    then took the lone "n" as a new one. The fix waits longer -- but only while
+    the agent asked for dictation and what has been said trails off on a letter
+    or a number, so a plain "yes" is still answered immediately.
+    """
+
+    async def _at_the_spelling_prompt(self, manager: TurnManager, speaker: Speaker) -> datetime:
+        moment = T0
+        for line in ("Nina Okafr", "no"):
+            await say(manager, line, moment)
+            moment += timedelta(seconds=5)
+        assert "spell your last name" in speaker.said[-1]
+        return moment
+
+    async def test_a_spelling_split_by_a_pause_is_one_answer(
+        self, manager: TurnManager, speaker: Speaker
+    ) -> None:
+        moment = await self._at_the_spelling_prompt(manager, speaker)
+        await manager.on_transcript(ended("O k a"), now=moment)
+        await manager.tick(now=moment + timedelta(milliseconds=400))
+        assert manager.stats.turns == 2, "answered half a spelling"
+
+        await manager.on_transcript(ended("f o r"), now=moment + timedelta(seconds=1))
+        await manager.tick(now=moment + timedelta(seconds=1, milliseconds=400))
+        assert manager.stats.turns == 2
+
+        await manager.tick(
+            now=moment + timedelta(seconds=1) + manager.timings.dictation_end_of_utterance
+        )
+        assert manager.stats.turns == 3
+        assert "O-K-A-F-O-R" in speaker.said[-1]
+
+    async def test_a_plain_yes_is_still_answered_at_once(
+        self, manager: TurnManager, speaker: Speaker
+    ) -> None:
+        moment = T0
+        await say(manager, "Nina Okafor", moment)
+        await manager.on_transcript(ended("Yes."), now=moment + timedelta(seconds=5))
+        await manager.tick(now=moment + timedelta(seconds=5, milliseconds=100))
+        assert manager.stats.turns == 2
+        assert "date of birth" in speaker.said[-1]
+
+    async def test_an_ordinary_question_ending_in_a_number_is_not_held(
+        self, manager: TurnManager, speaker: Speaker
+    ) -> None:
+        """Only dictation waits. "Is there anything at two" is not dictation."""
+        await manager.on_transcript(ended("Are you open on Saturday?"), now=T0)
+        await manager.tick(now=T0 + timedelta(milliseconds=100))
+        assert manager.stats.turns == 1

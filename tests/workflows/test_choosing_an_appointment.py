@@ -119,6 +119,8 @@ class TestChoosingByTheDayItNamed:
             session,
             "What appointments do I have?",
             f"John Smith, born {JOHN_SMITH_DOB:%d %B %Y}",
+            "yes",
+            "yes",
         )
         assert "Which one did you mean?" in listing
         return session, listing
@@ -176,6 +178,8 @@ class TestStaleOffersDoNotResolveAChoice:
         for line in (
             "I'd like to book a follow up",
             f"John Smith, born {JOHN_SMITH_DOB:%d %B %Y}",
+            "yes",
+            "yes",
             "The second one",
             "Yes",
         ):

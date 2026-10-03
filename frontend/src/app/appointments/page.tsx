@@ -47,7 +47,7 @@ export default function AppointmentsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold">Appointments</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-strong">Appointments</h1>
         <p className="mt-1 text-sm text-muted">
           The clinic schedule, by day. Booked through the agent or seeded — the record does not
           distinguish, and neither does this page.

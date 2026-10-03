@@ -1,0 +1,92 @@
+# Render Blueprint: the whole of CareLine on Render.
+#
+#   careline-api  FastAPI agent + voice WebSocket (Docker). Holds every API key.
+#   careline-web  Next.js site: the call page and the staff dashboard.
+#   careline-db   Postgres for calls, turns, audit, escalations, spend.
+#
+# Secrets are `sync: false`: Render asks for them once, when the Blueprint is
+# created, and stores them encrypted. They are never in this file, never in
+# the repository, and never sent to the browser -- the site only ever knows
+# the API's public URL. See docs/deploy-render.md.
+
+databases:
+  - name: careline-db
+    plan: free
+    region: oregon
+    databaseName: careline
+    user: careline
+
+services:
+  - name: careline-api
+    type: web
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./infra/backend.Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      # Paid providers, voice on. Synthetic in-memory EHR.
+      - key: AI_MODE
+        value: cloud
+      - key: LLM_PROVIDER
+        value: groq
+      - key: STT_PROVIDER
+        value: deepgram
+      - key: TTS_PROVIDER
+        value: deepgram
+      - key: TEXT_ONLY_MODE
+        value: "false"
+      - key: STT_ENABLED
+        value: "true"
+      - key: TTS_ENABLED
+        value: "true"
+      - key: EHR_PROVIDER
+        value: memory
+      - key: PERSISTENCE_ENABLED
+        value: "true"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: careline-db
+          property: connectionString
+      # Spending caps. The project cap is carried forward from the database
+      # at every start, so it means "this deployment", not "this boot".
+      - key: MAX_ESTIMATED_PROJECT_COST_USD
+        value: "20"
+      - key: WARN_ESTIMATED_PROJECT_COST_USD
+        value: "15"
+      - key: MAX_ESTIMATED_SESSION_COST_USD
+        value: "1"
+      # --- Secrets: entered once in the Render dashboard -----------------
+      - key: GROQ_API_KEY
+        sync: false
+      - key: DEEPGRAM_API_KEY
+        sync: false
+      # The site's public URL, as a JSON list, for CORS:
+      #   ["https://careline-web.onrender.com"]
+      - key: DASHBOARD_ORIGINS
+        sync: false
+      # This service's own public URL. Twilio (next phase) dials it.
+      #   https://careline-api.onrender.com
+      - key: PUBLIC_BASE_URL
+        sync: false
+
+  - name: careline-web
+    type: web
+    runtime: node
+    plan: free
+    region: oregon
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # The API's public URL, baked into the site at build time:
+      #   https://careline-api.onrender.com
+      - key: NEXT_PUBLIC_API_BASE_URL
+        sync: false

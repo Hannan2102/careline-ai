@@ -100,8 +100,13 @@ def orchestrator(wall_clock_ehr: EHRProvider) -> Orchestrator:
     the past and the agent correctly answers that it has no availability. That
     happened on 2026-09-21, thirteen days after the fixture was written.
     """
+    # The clinic-question switch is on because "Are you open on Saturday?" is
+    # this file's cheapest complete exchange, and these tests are about the
+    # transport carrying a turn, not about identity coming first (ADR 010) --
+    # which is tested, word for word, in tests/workflows/test_identity_first.py.
     return build_runtime(
-        ehr=wall_clock_ehr, settings=Settings(_env_file=None, app_env="test")
+        ehr=wall_clock_ehr,
+        settings=Settings(_env_file=None, app_env="test", identity_first_allow_faq=True),
     ).orchestrator
 
 
@@ -148,11 +153,13 @@ class TestAWholeCall:
             [
                 "Hi, I'd like to schedule a diabetes follow-up with Dr. Patel next week",
                 IDENTIFY,
+                "yes",
+                "yes",
                 "The first one please",
                 "Yes",
             ],
         )
-        await voice.run(chunks(4))
+        await voice.run(chunks(6))
 
         assert voice.session.is_verified
         assert "booked" in tts.spoken[-1].lower()
@@ -399,3 +406,20 @@ class TestHangingUp:
         assert voice.manager.close_reason is CloseReason.CALLER_HUNG_UP, (
             "closed the call on a caller who had just said they wanted something else"
         )
+
+
+class TestTheAgentsWordsReachTheClient:
+    async def test_each_reply_is_reported_in_its_written_form(
+        self, orchestrator: Orchestrator
+    ) -> None:
+        """The page shows "J-O-H-N" while the caller hears each letter."""
+        voice, tts, _out = build(orchestrator, ["Are you open on Saturday?"])
+        said: list[str] = []
+
+        async def capture(text: str) -> None:
+            said.append(text)
+
+        voice.on_say = capture
+        await voice.run(chunks(1))
+        assert said == [line for line in tts.spoken if line in said]
+        assert any("closed on Saturday" in line for line in said)

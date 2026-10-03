@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from app.agents.orchestrator import Orchestrator, TurnResult
+from app.agents.spelling import sounds_unfinished
 from app.agents.state import SessionState
 from app.ai.providers.base import Transcript
 from app.observability.logging import get_logger
@@ -47,6 +48,16 @@ class TurnTimings:
     #: is answering half a sentence -- which is what 800 ms did to a caller
     #: pausing in the middle of "my full name is ... Linda Nguyen".
     end_of_utterance: timedelta = timedelta(milliseconds=1800)
+    #: Quiet before answering dictation that stopped mid-sequence -- a name
+    #: being spelled, a date or a number read out -- whatever the recogniser
+    #: says about end-of-speech. It reports every pause between letters as the
+    #: end, and on a live call that turned "H-A-N-N-A-N" into a surname of
+    #: "HAN" and then of "N". Only applied when the agent asked for dictation
+    #: and the words so far end on a letter or a number, so "yes" is still
+    #: answered at once.
+    #: Three seconds: a second live call cut a phone number off after "One",
+    #: at two and a half -- callers stop to check a number they rarely say.
+    dictation_end_of_utterance: timedelta = timedelta(milliseconds=3000)
     #: Quiet with nothing said at all before we re-prompt. Measured from the
     #: moment the caller could actually have started speaking -- the end of our
     #: own last utterance -- not from the last thing they said.
@@ -240,13 +251,7 @@ class TurnManager:
 
         # An utterance is finished when the recogniser says so, or -- for one
         # that does not report end-of-speech -- when it has gone quiet.
-        if self._buffer and (
-            self._utterance_ended
-            or (
-                self._last_final_at is not None
-                and moment - self._last_final_at >= self.timings.end_of_utterance
-            )
-        ):
+        if self._buffer and self._utterance_is_over(moment):
             self._utterance_ended = False
             await self._run_turn(moment)
             return
@@ -268,6 +273,28 @@ class TurnManager:
                 "Please call back and we'll pick up where we left off."
             )
             await self.close(CloseReason.SILENCE)
+
+    def _utterance_is_over(self, moment: datetime) -> bool:
+        """Whether the caller has finished, not merely paused.
+
+        Normally when the recogniser says so, or after ``end_of_utterance`` of
+        quiet. While dictating -- and only while what has been said so far
+        trails off on a letter or a number -- the recogniser's word is not
+        taken, and the longer ``dictation_end_of_utterance`` must pass instead.
+        """
+        if self._last_final_at is None:
+            return self._utterance_ended
+        quiet = moment - self._last_final_at
+        if self.orchestrator.expects_dictation(self.session) and sounds_unfinished(
+            " ".join(self._buffer)
+        ):
+            return quiet >= self.timings.dictation_end_of_utterance
+        return self._utterance_ended or quiet >= self.timings.end_of_utterance
+
+    @property
+    def longest_wait(self) -> timedelta:
+        """The most an utterance is ever waited for."""
+        return max(self.timings.end_of_utterance, self.timings.dictation_end_of_utterance)
 
     # -------------------------------------------------------------- turns
     async def _run_turn(self, moment: datetime) -> TurnResult | None:
@@ -306,7 +333,7 @@ class TurnManager:
         if self._pending:
             self._buffer.extend(self._pending)
             self._pending.clear()
-            self._last_final_at = moment - self.timings.end_of_utterance
+            self._last_final_at = moment - self.longest_wait
         return result
 
     # ------------------------------------------------------------ playback

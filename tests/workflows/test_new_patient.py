@@ -47,23 +47,32 @@ async def say(runtime: Runtime, session: SessionState, *lines: str) -> str:
     return message
 
 
+#: Name and date of birth are each read back and confirmed (ADR 010) --
+#: registration takes them by the same steps as every other caller.
 REGISTER = (
     "I've never been to this clinic before, can I get an appointment?",
     "Nina Okafor",
+    "yes",
     "Third of May nineteen ninety",
+    "yes",
     "Five five five, oh one nine, oh two three four",
-    "A check-up",
 )
+
+#: What the visit is for -- asked when they book, not during registration.
+BOOK_FIRST_VISIT = ("A check-up", "The first one, please", "Yes")
 
 
 class TestAStrangerCanBecomeAPatient:
     async def test_the_whole_thing_end_to_end(
         self, runtime: Runtime, session: SessionState
     ) -> None:
-        offered = await say(runtime, session, *REGISTER)
-        assert "you're registered" in offered.lower()
+        registered = await say(runtime, session, *REGISTER)
+        assert registered.startswith("Thanks, Nina, you're registered.")
+        # They asked for an appointment in their first sentence, so that is
+        # where the call goes next -- starting with what it is for.
+        assert "What would you like to be seen about?" in registered
 
-        booked = await say(runtime, session, "The first one, please", "Yes")
+        booked = await say(runtime, session, *BOOK_FIRST_VISIT)
 
         assert "You're booked in" in booked
         assert session.is_verified
@@ -79,7 +88,7 @@ class TestAStrangerCanBecomeAPatient:
         the booking workflow is told the type rather than left to classify
         "a check-up" into a fifteen-minute slot.
         """
-        await say(runtime, session, *REGISTER, "The first one, please", "Yes")
+        await say(runtime, session, *REGISTER, *BOOK_FIRST_VISIT)
 
         appointments = await runtime.ehr.list_appointments(NOW.date(), NOW.date() + _WEEK)
         mine = [a for a in appointments if a.patient_ref == session.patient_ref]
@@ -93,7 +102,7 @@ class TestAStrangerCanBecomeAPatient:
         Registration over the phone is not identity proofing and this project
         does not pretend otherwise; this sentence is where the loop closes.
         """
-        booked = await say(runtime, session, *REGISTER, "The first one, please", "Yes")
+        booked = await say(runtime, session, *REGISTER, *BOOK_FIRST_VISIT)
 
         assert "photo ID" in booked
         assert "20 minutes early" in booked
@@ -102,7 +111,7 @@ class TestAStrangerCanBecomeAPatient:
         self, runtime: Runtime, session: SessionState
     ) -> None:
         """Otherwise the visit note is whatever sentence opened the call."""
-        await say(runtime, session, *REGISTER, "The first one, please", "Yes")
+        await say(runtime, session, *REGISTER, *BOOK_FIRST_VISIT)
 
         appointments = await runtime.ehr.list_appointments(NOW.date(), NOW.date() + _WEEK)
         mine = next(a for a in appointments if a.patient_ref == session.patient_ref)
@@ -111,13 +120,71 @@ class TestAStrangerCanBecomeAPatient:
     async def test_details_volunteered_all_at_once_are_kept(
         self, runtime: Runtime, session: SessionState
     ) -> None:
-        """People do not answer one question at a time."""
-        asked = await say(
+        """People do not answer one question at a time.
+
+        Both halves are kept, and both are still read back: a one-breath
+        answer is the likeliest place for a recogniser to have mangled one.
+        """
+        spelled = await say(
             runtime,
             session,
             "I'm new here — I'm Nina Okafor, born the third of May nineteen ninety",
         )
+        assert "N-I-N-A" in spelled
+        read_back = await say(runtime, session, "yes")
+        assert "third of May, nineteen ninety" in read_back
+        asked = await say(runtime, session, "yes")
         assert "phone number" in asked, f"asked for something already given: {asked}"
+
+
+class TestAfterRegistering:
+    """Registered is not the same as wanting an appointment this minute."""
+
+    DETAILS = (
+        "I'm new and I'd like to register",
+        "Nina Okafor",
+        "yes",
+        "Third of May nineteen ninety",
+        "yes",
+    )
+
+    async def test_without_a_request_it_says_what_it_can_do(
+        self, runtime: Runtime, session: SessionState
+    ) -> None:
+        message = await say(
+            runtime, session, *self.DETAILS, "five five five oh one nine oh two three four"
+        )
+        assert message.startswith("Thanks, Nina, you're registered.")
+        assert "book your first appointment" in message
+        assert "What would you like to do?" in message
+        assert session.is_verified
+        appointments = await runtime.ehr.list_appointments(NOW.date(), NOW.date() + _WEEK)
+        assert not [a for a in appointments if a.patient_ref == session.patient_ref]
+
+    async def test_booking_afterwards_is_still_the_first_visit(
+        self, runtime: Runtime, session: SessionState
+    ) -> None:
+        await say(runtime, session, *self.DETAILS, "five five five oh one nine oh two three four")
+        asked = await say(runtime, session, "I'd like to book an appointment")
+        assert "first visit" in asked
+        await say(runtime, session, *BOOK_FIRST_VISIT)
+        appointments = await runtime.ehr.list_appointments(NOW.date(), NOW.date() + _WEEK)
+        mine = [a for a in appointments if a.patient_ref == session.patient_ref]
+        assert [a.appointment_type for a in mine] == [AppointmentType.NEW_PATIENT]
+        assert mine[0].reason == "A check-up"
+
+    async def test_a_phone_number_said_in_two_parts_is_one_number(
+        self, runtime: Runtime, session: SessionState
+    ) -> None:
+        """Found live: "One", a pause, then the other nine digits."""
+        await say(runtime, session, *self.DETAILS)
+        assert await say(runtime, session, "One") == "Mm-hm, go on."
+        message = await say(
+            runtime, session, "two, three, four, five, six, seven, eight, nine, zero."
+        )
+        assert "you're registered" in message
+        patient = await runtime.ehr.get_patient(str(session.patient_ref))
+        assert patient.phone_last_four == "7890"
 
 
 class TestNoSecondRecordForSomebodyWhoHasOne:
@@ -137,7 +204,9 @@ class TestNoSecondRecordForSomebodyWhoHasOne:
             session,
             "I'd like to register with the practice",
             "John Smith",
+            "yes",
             f"{JOHN_SMITH_DOB:%d %B %Y}",
+            "yes",
         )
 
         assert "front desk" in answer
@@ -155,9 +224,15 @@ class TestNoSecondRecordForSomebodyWhoHasOne:
         await say(
             runtime,
             session,
-            "I'd like to register",
+            # A phrasing that starts a registration. One that does not ("I'd
+            # like to register" alone) goes through the identity steps, where
+            # John Smith's real name and date of birth verify the caller as
+            # him -- the weakness ADR 003 documents, not this test's subject.
+            "I'd like to register with the practice",
             "John Smith",
+            "yes",
             f"{JOHN_SMITH_DOB:%d %B %Y}",
+            "yes",
         )
         answer = await say(runtime, session, "What medication am I on?")
 
@@ -182,7 +257,9 @@ class TestFailedVerificationIsNotARegistration:
             session,
             "I need to check my appointment",
             "John Smith",
+            "yes",
             "First of January nineteen ninety nine",
+            "yes",
         )
 
         assert "couldn't find a match" in answer
@@ -202,7 +279,9 @@ class TestFailedVerificationIsNotARegistration:
             session,
             "I need to check my appointment",
             "Someone Unknown",
+            "yes",
             "First of January nineteen ninety nine",
+            "yes",
         )
 
         assert "not been to the clinic before" in answer
@@ -215,19 +294,23 @@ class TestFailedVerificationIsNotARegistration:
             session,
             "I need to check my appointment",
             "Nina Okafor",
+            "yes",
             "Third of May nineteen ninety",
+            "yes",
         )
 
         answer = await say(runtime, session, "I've never been to the clinic before")
 
-        assert "register" in answer.lower()
+        # Straight to the phone number: the name and date of birth were
+        # confirmed letter by letter a moment ago (ADR 010).
+        assert "phone number" in answer
 
 
 class TestWhatIsAsked:
-    async def test_it_asks_for_four_things_and_no_more(
+    async def test_it_asks_for_three_things_and_no_more(
         self, runtime: Runtime, session: SessionState
     ) -> None:
-        """A name, a date of birth, a phone number, and what it is about.
+        """A name, a date of birth and a phone number.
 
         No insurance identifier, no social security number, nothing a
         receptionist would only take with a photo ID in front of them. The
@@ -263,11 +346,18 @@ class TestTellingTheTwoNewPatientQuestionsApart:
         ],
     )
     async def test_the_question_is_answered_not_acted_on(
-        self, runtime: Runtime, session: SessionState, utterance: str
+        self, memory_ehr: EHRProvider, session: SessionState, utterance: str
     ) -> None:
+        # The clinic-question switch, so the answer can be seen before
+        # identity; without it the question is held until the caller is
+        # verified, which says nothing about how it was classified.
+        runtime = build_runtime(
+            ehr=memory_ehr,
+            settings=Settings(_env_file=None, app_env="test", identity_first_allow_faq=True),
+        )
         answer = await say(runtime, session, utterance)
         assert "45-minute" in answer
-        assert "full name" not in answer
+        assert "registered" not in answer
 
     @pytest.mark.parametrize(
         "utterance",
@@ -282,7 +372,7 @@ class TestTellingTheTwoNewPatientQuestionsApart:
         self, runtime: Runtime, session: SessionState, utterance: str
     ) -> None:
         answer = await say(runtime, session, utterance)
-        assert "full name" in answer
+        assert answer == "Happy to get you registered. Could I take your first and last name?"
 
 
 class TestWhatTheCallerSaysCanBeWrong:
@@ -292,10 +382,12 @@ class TestWhatTheCallerSaysCanBeWrong:
         before = len(await runtime.ehr.list_patients())
 
         answer = await say(
-            runtime, session, "I'm a new patient", "Sam Doyle", "Third of May twenty forty"
+            runtime, session, "I'm a new patient", "Sam Doyle", "yes", "Third of May twenty forty"
         )
 
-        assert "date of birth" in answer
+        # Not a date of birth at all, so it is never read back, never
+        # confirmed, and never reaches the record.
+        assert "didn't catch that" in answer
         assert len(await runtime.ehr.list_patients()) == before
 
     async def test_a_phone_number_too_short_is_asked_for_again(
@@ -306,10 +398,15 @@ class TestWhatTheCallerSaysCanBeWrong:
             session,
             "I'm a new patient",
             "Sam Doyle",
+            "yes",
             "Third of May nineteen ninety",
+            "yes",
             "one two three",
+            "that's it",
         )
 
+        # Three digits are held for the rest; a turn with no more digits is
+        # not, so the number is asked for again rather than "go on" for ever.
         assert "phone number" in answer
 
     async def test_a_clinical_question_mid_registration_is_still_refused(

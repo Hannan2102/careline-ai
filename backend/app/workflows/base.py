@@ -37,7 +37,20 @@ class AwaitedInput(StrEnum):
     infer the state of the conversation.
     """
 
-    IDENTITY = "identity"
+    #: The identity steps, one question each (ADR 010). One combined
+    #: "name and date of birth" value used to cover all of them, which told
+    #: extraction a name *or* a date might be coming and left it to guess
+    #: which; each step now says exactly what was asked.
+    #: "Are you an existing patient, or new?" -- the first question of every
+    #: call, because the two answers lead to different steps: verification
+    #: against the record, or registration.
+    PATIENT_STATUS = "patient_status"
+    NAME = "name"
+    NAME_CONFIRMATION = "name_confirmation"
+    NAME_SPELLING = "name_spelling"
+    DATE_OF_BIRTH = "date_of_birth"
+    DOB_CONFIRMATION = "dob_confirmation"
+    DOB_DISAMBIGUATION = "dob_disambiguation"
     SECOND_FACTOR = "second_factor"
     REASON = "reason"
     SLOT_CHOICE = "slot_choice"

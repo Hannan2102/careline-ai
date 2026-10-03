@@ -1,20 +1,65 @@
 @import "tailwindcss";
 
-/* One dark, high-contrast console theme. The dashboard is an operations tool
-   that lives on a wall-mounted screen as readily as a laptop, so it commits to
-   a single look rather than tracking the viewer's colour scheme. */
+/* A clinical palette: a soft blue-grey ground, white cards, a single calm
+   teal for anything you can act on, and colour reserved for meaning --
+   amber for "worth a look", rose for "a person has been called". The token
+   names are the dashboard's original ones, so every page re-themes from here
+   rather than being restyled one class at a time. */
 @theme {
-  --color-ink: #0b1020;
-  --color-panel: #121a2e;
-  --color-edge: #223052;
-  --color-muted: #8ea0c6;
-  --color-accent: #5eead4;
-  --color-warn: #fbbf24;
-  --color-danger: #fb7185;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+
+  --color-ink: #f3f7fa; /* page ground */
+  --color-panel: #ffffff; /* cards */
+  --color-edge: #dde6ee; /* hairlines */
+  --color-muted: #5d6f82; /* secondary text */
+  --color-strong: #0f2236; /* primary text */
+  --color-accent: #0e8a7e; /* clinical teal: actions, good states */
+  --color-accent-soft: #e3f4f1;
+  --color-brand: #0b5c8a; /* deep clinical blue: headings, logo */
+  --color-warn: #b7700b;
+  --color-danger: #d23a5a;
 }
 
 body {
   background-color: var(--color-ink);
-  color: #e6edf7;
-  font-feature-settings: "tnum" 1;
+  color: var(--color-strong);
+  font-feature-settings: "tnum" 1, "cv11" 1;
+}
+
+/* The listening ring on the call button. */
+@keyframes careline-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(1.55);
+    opacity: 0;
+  }
+}
+
+.pulse-ring {
+  animation: careline-pulse 1.8s ease-out infinite;
+}
+
+@keyframes careline-bar {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+.voice-bar {
+  transform-origin: bottom;
+  animation: careline-bar 0.9s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse-ring,
+  .voice-bar {
+    animation: none;
+  }
 }

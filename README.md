@@ -87,6 +87,12 @@ Working today, end to end in text **and by voice from a browser microphone**:
   `LocalFHIRProvider` (HAPI FHIR R4 over REST) — held to one contract suite
 - Session-scoped verification, and access control that refuses on both the unverified and
   the mismatched-patient case
+- An identity-first opening (ADR 010): every call asks whether the caller is an existing
+  patient or new, takes their name and spells it back letter by letter, then reads the
+  date of birth back with the month as a word. New patients are registered with a phone
+  number and told what the agent can do.
+  Ambiguous dates ("03/04/1990") are asked about, never guessed, and whatever the caller
+  asked for along the way is acted on as soon as they are verified
 - Booking, rescheduling, cancellation, medication lookup, refill requests, insurance
   cover, clinic FAQ
 - Registration for a caller who is not in the record yet, with a duplicate check before

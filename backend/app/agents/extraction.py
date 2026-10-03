@@ -14,14 +14,15 @@ only ever produce "I didn't understand", never an unsafe action.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from typing import Protocol
 
-from dateutil import parser as date_parser
-
+from app.agents.dob_parser import DobParse, DobStatus, parse_date_of_birth
 from app.agents.intents import Intent
-from app.config.clinic import FAQ_TOPIC_ALIASES, PRACTITIONERS
+from app.agents.spelling import parse_spelled
+from app.config.clinic import CLINIC_TIMEZONE, FAQ_TOPIC_ALIASES, PRACTITIONERS
 from app.utils.formatting import mentions_a_weekday
 from app.workflows.base import AwaitedInput, SlotOffer
 
@@ -33,7 +34,18 @@ class ExtractedTurn:
     intent: Intent
     confidence: float
     full_name: str | None = None
+    #: A date of birth, only when exactly one reading of what was said is a
+    #: real date. Two readings go in ``dob_candidates`` instead, for the
+    #: caller to choose between -- never picked here (dob_parser.py).
     date_of_birth: date | None = None
+    dob_candidates: tuple[date, ...] = ()
+    #: The model heard a date of birth being offered. Never a value: which date
+    #: it was is the parser's to say (ADR 008).
+    dob_offered: bool = False
+    #: Letters the caller spelled, upper-case: "SMYTH", "O'BRIEN".
+    spelled: str | None = None
+    #: "existing" or "new", in answer to the opening question.
+    patient_status: str | None = None
     second_factor_value: str | None = None
     #: A contact number for somebody being registered, not a factor to check.
     phone: str | None = None
@@ -148,6 +160,7 @@ NEW_PATIENT_PHRASES: tuple[str, ...] = (
     "not been before",
     "never been to",
     "never been before",
+    "never been here",
     "not registered",
     "register with",
     "register me",
@@ -629,7 +642,8 @@ MEDICATION_SYNONYMS: tuple[tuple[str, str], ...] = (
 
 #: The lead-in is case-insensitive; the name itself is not. Requiring capitals
 #: on the name is what stops "i'm going to need an appointment" being read as a
-#: person called "Going To".
+#: person called "Going To" -- when nobody asked for a name. When somebody did,
+#: see ``_answered_name`` below.
 _NAME_PATTERNS = (
     r"(?i:my name'?s|my name is|i am|i'?m|this is|it'?s|speaking with|calling for)"
     r"\s+([A-Z][\w'-]+(?:\s+[A-Z][\w'-]+)+)",
@@ -724,27 +738,224 @@ _MONTH_RE = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
 #: The same month vocabulary, anchored, for testing one word at a time.
 _MONTH_FULLMATCH = re.compile(_MONTH_RE, re.IGNORECASE)
 
-_DOB_PATTERNS = (
-    r"\b(\d{4}-\d{2}-\d{2})\b",
-    rf"\b(\d{{1,2}}\s+{_MONTH_RE}\s+\d{{4}})\b",
-    rf"\b({_MONTH_RE}\s+\d{{1,2}}(?:st|nd|rd|th)?,?\s+\d{{4}})\b",
-    r"\b(\d{1,2}/\d{1,2}/\d{4})\b",
+#: Lead-ins to a name, for when one was asked for.
+_NAME_LEAD_IN = re.compile(
+    r"(?i)\b(?:my name'?s|my name is|name is|this is|i am|i'?m|it'?s|it is|call me)\s+"
 )
+
+#: Words that cannot be part of a name, used only when a name was asked for and
+#: the transcript is lower case. Short on purpose: it has to catch the things
+#: people say *instead* of a name at the name prompt ("I need to book", "sorry,
+#: what?") and nothing more, because every word here is a surname somebody
+#: cannot give.
+_NOT_A_NAME = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "but",
+        "i",
+        "i'm",
+        "im",
+        "me",
+        "my",
+        "you",
+        "your",
+        "we",
+        "to",
+        "for",
+        "of",
+        "in",
+        "on",
+        "at",
+        "with",
+        "about",
+        "from",
+        "is",
+        "am",
+        "are",
+        "was",
+        "be",
+        "been",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "can",
+        "could",
+        "would",
+        "should",
+        "will",
+        "want",
+        "need",
+        "like",
+        "book",
+        "booking",
+        "appointment",
+        "schedule",
+        "cancel",
+        "reschedule",
+        "calling",
+        "call",
+        "help",
+        "please",
+        "thanks",
+        "thank",
+        "yes",
+        "yeah",
+        "yep",
+        "yup",
+        "no",
+        "nope",
+        "not",
+        "here",
+        "there",
+        "this",
+        "that",
+        "that's",
+        "it",
+        "it's",
+        "what",
+        "when",
+        "where",
+        "who",
+        "why",
+        "how",
+        "hello",
+        "hi",
+        "hey",
+        "sorry",
+        "born",
+        "date",
+        "birth",
+        "dob",
+        "just",
+        "so",
+        "um",
+        "uh",
+        "okay",
+        "ok",
+        "new",
+        "patient",
+        "refill",
+        "prescription",
+        "medication",
+        "question",
+        "speaking",
+        "correct",
+        "right",
+        "wrong",
+        "sure",
+        "fine",
+        "great",
+        "good",
+        "perfect",
+        "exactly",
+        "alright",
+        "again",
+        "repeat",
+        "name",
+        "first",
+        "last",
+        "surname",
+        "spell",
+        "spelled",
+        "spelt",
+        "doctor",
+        "dr",
+        # How a free-form correction continues past the name: "it's Jon
+        # without the h". Stopping here keeps "Without" out of the surname.
+        "without",
+        "instead",
+        "extra",
+        "missing",
+        "rather",
+        "than",
+        "also",
+        "actually",
+        "double",
+        "letter",
+        "letters",
+        "spelling",
+        "mean",
+        "meant",
+        "said",
+        "wait",
+    }
+)
+
+#: Said before a name and not part of it.
+_NAME_FILLERS = frozenset(
+    {
+        "yes",
+        "yeah",
+        "yep",
+        "sure",
+        "ok",
+        "okay",
+        "hi",
+        "hello",
+        "hey",
+        "um",
+        "uh",
+        "er",
+        "erm",
+        "hmm",
+        "mm",
+        "mhm",
+        "oh",
+        "well",
+        "so",
+        "sorry",
+        "it's",
+        "its",
+    }
+)
+
+#: The identity questions whose answer can be a name.
+_NAME_ANSWERS = frozenset(
+    {AwaitedInput.NAME, AwaitedInput.NAME_CONFIRMATION, AwaitedInput.NAME_SPELLING}
+)
+
+#: Where a capitalised name is taken as an answer, but a lower-case one is
+#: not: the opening question is answered with "existing", which is not a
+#: person, far more often than with a name.
+_CAPITALISED_NAME_ANSWERS = _NAME_ANSWERS | {AwaitedInput.PATIENT_STATUS}
+
+#: "Existing Patient", capitalised by the recogniser, is not somebody's name.
+_STATUS_WORDS = frozenset({"existing", "new", "patient", "returning", "current", "registered"})
+
+
+def _clinic_today() -> date:
+    return datetime.now(CLINIC_TIMEZONE).date()
 
 
 class RuleBasedExtractor:
     """Deterministic extraction. The mock-mode implementation of the seam."""
+
+    def __init__(self, today: Callable[[], date] | None = None) -> None:
+        #: "Today", for the date-of-birth checks: not in the future, and which
+        #: century a two-digit year belongs to. Injected so tests can pin it.
+        self._today = today or _clinic_today
 
     def extract(self, utterance: str, context: ExtractionContext) -> ExtractedTurn:
         text = utterance.strip()
         lowered = text.lower()
 
         intent, confidence = self._intent(lowered, context)
+        born = self._date_of_birth(text)
         return ExtractedTurn(
             intent=intent,
             confidence=confidence,
             full_name=self._name(text, context),
-            date_of_birth=self._date_of_birth(text),
+            date_of_birth=born.value,
+            dob_candidates=born.candidates if born.status is DobStatus.AMBIGUOUS else (),
+            spelled=self._spelled(text, context),
+            patient_status=self._patient_status(lowered, context),
             second_factor_value=self._second_factor(lowered, context),
             phone=self._phone(lowered, context),
             reason=self._reason(text, intent, context),
@@ -752,7 +963,7 @@ class RuleBasedExtractor:
             medication_name=self._medication(lowered, context),
             faq_topic=self._faq_topic(lowered),
             ordinal=self._ordinal(lowered, context),
-            confirm=self._confirmation(lowered),
+            confirm=self._confirmation(lowered, context),
             none_suitable=any(phrase in lowered for phrase in NONE_SUITABLE),
             list_all=any(
                 phrase in lowered
@@ -793,12 +1004,20 @@ class RuleBasedExtractor:
         still a priority: the caller's own cover before the clinic's brochure,
         before the appointment verbs, before a bare "do you...?".
         """
-        if context.awaiting is not None:
+        if context.awaiting is not None and context.awaiting not in (
+            AwaitedInput.NAME,
+            AwaitedInput.PATIENT_STATUS,
+        ):
             # One exception, and it is one the agent asks for: the identity
             # prompt says "if you've not been to the clinic before, say so and
             # I can register you". A caller who says it must be heard, and it
             # cannot be an answer to "what is your name and date of birth" --
             # so hearing it costs nothing that mid-workflow silence protects.
+            #
+            # The name prompt is classified in full, because it is where every
+            # call now opens (ADR 010): "I need to reschedule, my name is John
+            # Smith" answers the question *and* says what the call is for, and
+            # the second half is what the agent does once it knows who they are.
             if any(phrase in lowered for phrase in NEW_PATIENT_PHRASES):
                 return Intent.NEW_PATIENT, 0.9
             return Intent.UNKNOWN, 1.0
@@ -895,31 +1114,59 @@ class RuleBasedExtractor:
     def _name(text: str, context: ExtractionContext) -> str | None:
         for pattern in _NAME_PATTERNS:
             match = re.search(pattern, text, re.MULTILINE)
-            if match:
+            if match and not _is_letters(match.group(1)):
                 return " ".join(match.group(1).split())
 
+        if context.awaiting not in _CAPITALISED_NAME_ANSWERS:
+            return None
         # When a name is what we asked for, a bare "John Smith" is an answer.
-        if context.awaiting is AwaitedInput.IDENTITY:
-            candidate = re.match(r"^\s*([A-Z][\w'-]+(?:\s+[A-Z][\w'-]+)+)", text.strip())
-            if candidate and not _is_spoken_date(candidate.group(1)):
-                return _without_leading_ordinal(candidate.group(1))
+        candidate = re.match(r"^\s*([A-Z][\w'-]+(?:\s+[A-Z][\w'-]+)+)", text.strip())
+        if (
+            candidate
+            and not _is_spoken_date(candidate.group(1))
+            and not _STATUS_WORDS & set(candidate.group(1).lower().split())
+        ):
+            return _without_leading_ordinal(candidate.group(1))
+        if context.awaiting not in _NAME_ANSWERS:
+            return None
+        return _answered_name(text)
+
+    @staticmethod
+    def _patient_status(lowered: str, context: ExtractionContext) -> str | None:
+        """ "existing" or "new", in answer to the opening question.
+
+        New is checked first: "I haven't been before" contains "been before",
+        and "not registered" contains "registered".
+        """
+        if context.awaiting is not AwaitedInput.PATIENT_STATUS:
+            return None
+        if any(phrase in lowered for phrase in NEW_PATIENT_PHRASES) or _NEW_ANSWER.search(lowered):
+            return "new"
+        if _EXISTING_ANSWER.search(lowered):
+            return "existing"
         return None
 
     @staticmethod
-    def _date_of_birth(text: str) -> date | None:
-        digitised = _spoken_numbers_to_digits(text)
-        for candidate in (text, digitised) if digitised != text else (text,):
-            for pattern in _DOB_PATTERNS:
-                match = re.search(pattern, candidate, re.IGNORECASE)
-                if not match:
-                    continue
-                try:
-                    # dayfirst: the clinic is fictional, but "15/02/1985" is far
-                    # more likely to be 15 February than an invalid month.
-                    return date_parser.parse(match.group(1), dayfirst=True).date()
-                except (ValueError, OverflowError):
-                    continue
+    def _spelled(text: str, context: ExtractionContext) -> str | None:
+        """Letters, when the agent has just read a name back or asked for one."""
+        # One letter is enough here, and only here: it is the tail of a
+        # spelling the recogniser split at a pause ("H a n" / "n"), which the
+        # identity steps join back onto what came before.
+        if context.awaiting is AwaitedInput.NAME_SPELLING:
+            return parse_spelled(text, allow_word=True, min_letters=1)
+        if context.awaiting is AwaitedInput.NAME_CONFIRMATION:
+            return parse_spelled(text, min_letters=1)
         return None
+
+    def _date_of_birth(self, text: str) -> DobParse:
+        """Every real date the utterance could be (dob_parser.py).
+
+        Formerly ``dateutil`` with ``dayfirst=True``, which turned "03/04/1990"
+        into the third of April without a word -- at a US clinic, where the
+        caller almost certainly meant the fourth of March. The parser never
+        picks between two readings; the identity steps ask.
+        """
+        return parse_date_of_birth(text, self._today())
 
     @staticmethod
     def _phone(lowered: str, context: ExtractionContext) -> str | None:
@@ -1056,13 +1303,140 @@ class RuleBasedExtractor:
         return None
 
     @staticmethod
-    def _confirmation(lowered: str) -> bool | None:
+    def _confirmation(lowered: str, context: ExtractionContext) -> bool | None:
         stripped = lowered.strip(" .!?,")
+        if context.awaiting in (
+            AwaitedInput.NAME_CONFIRMATION,
+            AwaitedInput.DOB_CONFIRMATION,
+        ):
+            answered = _read_back_answer(stripped)
+            if answered is not None:
+                return answered
         if any(re.search(rf"\b{re.escape(word)}\b", stripped) for word in NO_WORDS):
             return False
         if any(re.search(rf"\b{re.escape(word)}\b", stripped) for word in YES_WORDS):
             return True
         return None
+
+
+#: Answers to "are you an existing patient, or new?".
+_NEW_ANSWER = re.compile(
+    r"\b(?:new|register|registering|registration|first time|never been|haven't been|"
+    r"have not been|not been|not a patient|not yet)\b"
+)
+_EXISTING_ANSWER = re.compile(
+    r"\b(?:existing|already|returning|current|regular|registered|been before|been here|"
+    r"been there|been to the clinic|(?:i'?m|i am) a patient|a patient (?:here|there|with you))\b"
+)
+
+#: Ways of saying a read-back was right, beyond a plain yes.
+_READ_BACK_YES = frozenset(
+    {
+        "that's right",
+        "that is right",
+        "thats right",
+        "right",
+        "exactly",
+        "spot on",
+        "it is",
+        "that's it",
+        "that's correct",
+        "that is correct",
+        "uh huh",
+        "mm hmm",
+        "yes it is",
+    }
+)
+#: And wrong.
+_READ_BACK_NO = frozenset(
+    {
+        "wrong",
+        "that's wrong",
+        "incorrect",
+        "not quite",
+        "not right",
+        "that's not right",
+        "nope",
+        "no it isn't",
+        "no it's not",
+    }
+)
+_LEADING_YES = re.compile(r"^(?:yes|yeah|yep|yup|correct)\b")
+_LEADING_NO = re.compile(r"^(?:no|nope|nah)\b")
+
+
+def _read_back_answer(stripped: str) -> bool | None:
+    """Yes or no to "I have ... -- is that right?".
+
+    Its own reading because the general vocabulary was built for "anything
+    else?", where "that's it" means *no, I'm finished*. Said to a name read
+    back it means the opposite, and reading it as a no sent a caller whose
+    name was right into spelling it.
+
+    The first word decides when it is a yes or a no: "No, it's S M Y T H"
+    contains the letter-word "why", and "yes, that's it" contains "that's it".
+    """
+    if _LEADING_NO.match(stripped):
+        return False
+    if _LEADING_YES.match(stripped):
+        return True
+    plain = " ".join(_PUNCTUATION.sub(" ", stripped).split())
+    if plain in _READ_BACK_NO or any(phrase in plain for phrase in _READ_BACK_NO if " " in phrase):
+        return False
+    if plain in _READ_BACK_YES:
+        return True
+    return None
+
+
+def _is_letters(candidate: str) -> bool:
+    """ "G A R C I A" is a spelling, not a person called G A R C I A."""
+    return all(len(word.strip(".,")) == 1 for word in candidate.split())
+
+
+def _answered_name(text: str) -> str | None:
+    """A name in a transcript with no capitals, given the agent asked for one.
+
+    Capitals are what the rest of this module relies on to tell a name from a
+    sentence, and recognisers do not always supply them: "john smith" arrives
+    as often as "John Smith". Without this, a caller who said exactly what they
+    were asked was asked again. Safe only because a name was asked for --
+    "i'm going to need an appointment" said out of the blue is not a person
+    called Going To, which is why the capitals rule exists at all.
+
+    The name must be the whole answer, or follow a lead-in ("my name is ...")
+    and end at the next clause. One to four words, none of them words a name
+    cannot contain, and not a date read aloud.
+    """
+    lead = _NAME_LEAD_IN.search(text)
+    if lead:
+        # After "my name is", a name ends at the first clause break or number.
+        rest = re.split(r"[,.;:!?\d]", text[lead.end() :], maxsplit=1)[0]
+    else:
+        # Without one, the whole utterance has to be the name, commas and
+        # all. Cutting at the first comma read "mm, that'll do nicely" -- said
+        # to a spelling read back -- as a caller named Mm.
+        rest = re.split(r"\d", _PUNCTUATION.sub(" ", text), maxsplit=1)[0]
+    words = rest.lower().split()
+    while words and words[0] in _NAME_FILLERS:
+        words = words[1:]
+    taken: list[str] = []
+    for word in words:
+        # Two letters at least. A single letter is a spelling, or the tail of
+        # one: a live call replaced a surname with "N" because "n" -- the end
+        # of a spelling split across two turns -- passed as a one-word name.
+        if word in _NOT_A_NAME or not re.fullmatch(r"[a-z][a-z'-]+", word):
+            break
+        taken.append(word)
+    if not taken or len(taken) > 4:
+        return None
+    if lead is None and len(taken) != len(words):
+        # Without a lead-in, a name has to be all that was said: "john smith"
+        # is an answer, "john smith wants to book" is a sentence.
+        return None
+    candidate = " ".join(taken)
+    if _is_spoken_date(candidate):
+        return None
+    return _without_leading_ordinal(" ".join(w.capitalize() for w in taken))
 
 
 #: The words that hold a spoken date together but carry no number of their
@@ -1218,6 +1592,23 @@ def _spoken_numbers_to_digits(text: str) -> str:
     rewritten = re.sub(r"\bthe\s+", "", rewritten)
     rewritten = re.sub(r"\b(\d{1,2}) of (?=[a-z])", r"\1 ", rewritten)
     return rewritten
+
+
+def asks_to_book(text: str) -> bool:
+    """Whether a sentence asks for an appointment, whatever else it asks.
+
+    "I've never been before, can I get an appointment?" classifies as a new
+    patient -- correctly, because registering comes first -- and the booking
+    half has to be remembered separately or it is lost.
+    """
+    lowered = text.lower()
+    phrases = dict(INTENT_PHRASES)[Intent.BOOK_APPOINTMENT]
+    return any(phrase in lowered for phrase in phrases)
+
+
+def spoken_digits(text: str) -> str:
+    """Every digit in ``text``, whether written or read out ("oh four one one")."""
+    return re.sub(r"\D", "", _spoken_numbers_to_digits(_OH_AS_ZERO.sub("0", text.lower())))
 
 
 def _peek(words: list[str], index: int, offset: int) -> str:

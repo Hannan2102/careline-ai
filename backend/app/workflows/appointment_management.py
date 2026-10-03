@@ -45,7 +45,7 @@ from app.workflows.base import (
     WorkflowStatus,
     begin_request,
 )
-from app.workflows.identity import IdentityCollector, IdentityOutcome
+from app.workflows.identity import ASK_NAME, IdentityCollector, IdentityOutcome
 
 logger = get_logger(__name__)
 
@@ -186,7 +186,7 @@ class AppointmentManagementWorkflow:
             if result.outcome is IdentityOutcome.NEEDS_SECOND_FACTOR
             else ManagementState.COLLECTING_IDENTITY,
             result.message,
-            result.awaiting or AwaitedInput.IDENTITY,
+            result.awaiting or AwaitedInput.NAME,
         )
 
     async def _handle_second_factor(
@@ -690,8 +690,8 @@ class AppointmentManagementWorkflow:
             return self._awaiting(
                 session,
                 state,
-                "Happy to help. Could I take your full name and date of birth?",
-                AwaitedInput.IDENTITY,
+                "Happy to help. " + ASK_NAME,
+                AwaitedInput.NAME,
             )
         if state is ManagementState.AWAITING_SECOND_FACTOR:
             return self._awaiting(

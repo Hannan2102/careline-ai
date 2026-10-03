@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
-from tests.conftest import JOHN_SMITH, JOHN_SMITH_DOB, SEED_NOW
+from tests.conftest import JOHN_SMITH, JOHN_SMITH_DOB, SEED_NOW, verify_by_conversation
 
 from app.agents.factory import build_runtime
 from app.agents.orchestrator import Orchestrator
@@ -28,11 +28,33 @@ ROBERT_A = "Patient/demo-robert-johnson-a"
 ROBERT_B = "Patient/demo-robert-johnson-b"
 
 
+#: Name and date of birth in one breath, then yes to each read-back (ADR 010).
+IDENTIFY = (f"John Smith, born {JOHN_SMITH_DOB:%d %B %Y}", "yes", "yes")
+
+
 @pytest.fixture
 def orchestrator(memory_ehr: EHRProvider) -> Orchestrator:
     return build_runtime(
         ehr=memory_ehr, settings=Settings(_env_file=None, app_env="test")
     ).orchestrator
+
+
+@pytest.fixture
+def faq_first(memory_ehr: EHRProvider) -> Orchestrator:
+    """Clinic questions answered before identity (``identity_first_allow_faq``).
+
+    What these tests check is which questions are about the clinic and which
+    about the caller's record. With identity first by default, the switch is
+    what lets "answered without verification" be observed at all.
+    """
+    return build_runtime(
+        ehr=memory_ehr,
+        settings=Settings(_env_file=None, app_env="test", identity_first_allow_faq=True),
+    ).orchestrator
+
+
+async def identify(orchestrator: Orchestrator, session: SessionState) -> str:
+    return await verify_by_conversation(orchestrator, session, now=SEED_NOW, lines=IDENTIFY)
 
 
 class TestTheService:
@@ -69,20 +91,15 @@ class TestTheConversation:
     async def test_a_verified_caller_hears_their_plan(self, orchestrator: Orchestrator) -> None:
         session = SessionState(session_id="sess-cov", created_at=SEED_NOW)
         await orchestrator.handle_turn(session, "What insurance do I have?", now=SEED_NOW)
-        result = await orchestrator.handle_turn(
-            session, f"John Smith, born {JOHN_SMITH_DOB:%d %B %Y}", now=SEED_NOW
-        )
-        assert "Blue Shield PPO (demo)" in result.message
+        assert "Blue Shield PPO (demo)" in await identify(orchestrator, session)
 
     async def test_the_answer_refuses_to_quote_a_price(self, orchestrator: Orchestrator) -> None:
         """The one thing the record cannot support."""
         session = SessionState(session_id="sess-cov", created_at=SEED_NOW)
         await orchestrator.handle_turn(session, "Am I covered?", now=SEED_NOW)
-        result = await orchestrator.handle_turn(
-            session, f"John Smith, born {JOHN_SMITH_DOB:%d %B %Y}", now=SEED_NOW
-        )
-        assert "can't tell you what a visit will cost" in result.message
-        assert "front desk" in result.message
+        message = await identify(orchestrator, session)
+        assert "can't tell you what a visit will cost" in message
+        assert "front desk" in message
 
     async def test_cover_is_not_disclosed_before_verification(
         self, orchestrator: Orchestrator
@@ -109,9 +126,7 @@ class TestTheConversation:
     async def test_the_read_is_audited(self, orchestrator: Orchestrator) -> None:
         session = SessionState(session_id="sess-cov", created_at=SEED_NOW)
         await orchestrator.handle_turn(session, "Am I covered?", now=SEED_NOW)
-        await orchestrator.handle_turn(
-            session, f"John Smith, born {JOHN_SMITH_DOB:%d %B %Y}", now=SEED_NOW
-        )
+        await identify(orchestrator, session)
         actions = [e.action for e in orchestrator.audit.store.all()]
         assert AuditAction.COVERAGE_READ in actions
 
@@ -149,10 +164,10 @@ class TestWhoseInsurance:
         ],
     )
     async def test_clinic_questions_need_no_verification(
-        self, orchestrator: Orchestrator, question: str
+        self, faq_first: Orchestrator, question: str
     ) -> None:
         session = SessionState(session_id="sess-cov", created_at=SEED_NOW)
-        result = await orchestrator.handle_turn(session, question, now=SEED_NOW)
+        result = await faq_first.handle_turn(session, question, now=SEED_NOW)
         assert "We accept" in result.message, "made the caller verify to hear a public fact"
 
 
@@ -169,7 +184,7 @@ class TestBilling:
         ],
     )
     async def test_cost_questions_are_answered_without_asking_who_you_are(
-        self, orchestrator: Orchestrator, question: str
+        self, faq_first: Orchestrator, question: str
     ) -> None:
         """A billing question used to open a PHI-gated identity flow.
 
@@ -178,7 +193,7 @@ class TestBilling:
         before it would say anything.
         """
         session = SessionState(session_id="sess-bill", created_at=SEED_NOW)
-        result = await orchestrator.handle_turn(session, question, now=SEED_NOW)
+        result = await faq_first.handle_turn(session, question, now=SEED_NOW)
         assert "date of birth" not in result.message.lower(), (
             "a question about money asked the caller to prove who they are"
         )
@@ -189,7 +204,5 @@ class TestBilling:
     ) -> None:
         """ "How much" belongs to both, and medications must keep it."""
         session = SessionState(session_id="sess-dose", created_at=SEED_NOW)
-        result = await orchestrator.handle_turn(
-            session, "How much Metformin do I take?", now=SEED_NOW
-        )
-        assert "date of birth" in result.message.lower()
+        await orchestrator.handle_turn(session, "How much Metformin do I take?", now=SEED_NOW)
+        assert "One tablet twice daily" in await identify(orchestrator, session)

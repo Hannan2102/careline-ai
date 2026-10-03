@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
-from tests.conftest import JOHN_SMITH_DOB, SEED_NOW
+from tests.conftest import JOHN_SMITH_DOB, SEED_NOW, verify_by_conversation
 
 from app.agents.extraction import ExtractedTurn, ExtractionContext, RuleBasedExtractor
 from app.agents.factory import Runtime, build_runtime
@@ -37,7 +37,8 @@ from app.agents.state import SessionState
 from app.config.settings import Settings
 from app.ehr.base import EHRProvider
 
-IDENTIFY = f"John Smith, born {JOHN_SMITH_DOB:%d %B %Y}"
+#: Name and date of birth in one breath, then yes to each read-back (ADR 010).
+IDENTIFY = (f"John Smith, born {JOHN_SMITH_DOB:%d %B %Y}", "yes", "yes")
 
 
 @pytest.fixture
@@ -48,6 +49,18 @@ def runtime(memory_ehr: EHRProvider) -> Runtime:
 @pytest.fixture
 def session() -> SessionState:
     return SessionState(session_id="sess-offer", created_at=SEED_NOW)
+
+
+@pytest.fixture
+async def verified(runtime: Runtime, session: SessionState) -> SessionState:
+    """A caller past the identity steps, for what happens once they are.
+
+    The menu, the out-of-scope offer and "anything else?" all belong to the
+    conversation after identity -- before it, every turn is an answer to an
+    identity question (ADR 010).
+    """
+    await verify_by_conversation(runtime.orchestrator, session, now=SEED_NOW)
+    return session
 
 
 async def say(runtime: Runtime, session: SessionState, *lines: str) -> str:
@@ -62,7 +75,7 @@ class TestSayingYesToAnOffer:
         self, runtime: Runtime, session: SessionState
     ) -> None:
         """The offer is made by a workflow that then closes itself."""
-        cancelled = await say(runtime, session, "I need to cancel my appointment", IDENTIFY, "Yes")
+        cancelled = await say(runtime, session, "I need to cancel my appointment", *IDENTIFY, "Yes")
         assert "Would you like to rebook now?" in cancelled
 
         accepted = await say(runtime, session, "Yes please")
@@ -73,7 +86,7 @@ class TestSayingYesToAnOffer:
     async def test_booking_when_there_was_nothing_to_look_up(
         self, runtime: Runtime, session: SessionState
     ) -> None:
-        await say(runtime, session, "I need to cancel my appointment", IDENTIFY, "Yes")
+        await say(runtime, session, "I need to cancel my appointment", *IDENTIFY, "Yes")
         nothing = await say(runtime, session, "When is my appointment?")
         assert "Would you like to book one?" in nothing
 
@@ -93,7 +106,7 @@ class TestSayingYesToAnOffer:
         workflow asked again, and again.
         """
         await say(
-            runtime, session, "I need to cancel my appointment", IDENTIFY, "Yes", "Yes please"
+            runtime, session, "I need to cancel my appointment", *IDENTIFY, "Yes", "Yes please"
         )
 
         offered = await say(runtime, session, "My knee has been hurting")
@@ -103,7 +116,7 @@ class TestSayingYesToAnOffer:
     async def test_saying_no_does_not_start_anything(
         self, runtime: Runtime, session: SessionState
     ) -> None:
-        await say(runtime, session, "I need to cancel my appointment", IDENTIFY, "Yes")
+        await say(runtime, session, "I need to cancel my appointment", *IDENTIFY, "Yes")
 
         declined = await say(runtime, session, "No thanks")
 
@@ -118,7 +131,7 @@ class TestSayingYesToAnOffer:
         Treating anything that is not a yes as a refusal would swallow the
         question they actually asked.
         """
-        await say(runtime, session, "I need to cancel my appointment", IDENTIFY, "Yes")
+        await say(runtime, session, "I need to cancel my appointment", *IDENTIFY, "Yes")
 
         changed = await say(runtime, session, "What time do you shut?")
 
@@ -126,45 +139,45 @@ class TestSayingYesToAnOffer:
 
 
 class TestOfferingAPerson:
-    async def test_the_menu_comes_first(self, runtime: Runtime, session: SessionState) -> None:
+    async def test_the_menu_comes_first(self, runtime: Runtime, verified: SessionState) -> None:
         """It is a fair answer to a greeting or a false start."""
-        assert await say(runtime, session, "Hello?") == FALLBACK_MESSAGE
+        assert await say(runtime, verified, "Hello?") == FALLBACK_MESSAGE
 
     async def test_asking_twice_for_something_we_cannot_do_offers_a_person(
-        self, runtime: Runtime, session: SessionState
+        self, runtime: Runtime, verified: SessionState
     ) -> None:
-        await say(runtime, session, "Can you send my records to my solicitor?")
+        await say(runtime, verified, "Can you send my records to my solicitor?")
 
-        second = await say(runtime, session, "I need my notes sent somewhere")
+        second = await say(runtime, verified, "I need my notes sent somewhere")
 
         assert second == OUT_OF_SCOPE_MESSAGE
 
     async def test_accepting_the_offer_escalates(
-        self, runtime: Runtime, session: SessionState
+        self, runtime: Runtime, verified: SessionState
     ) -> None:
-        await say(runtime, session, "Send my notes to my solicitor", "Send my notes somewhere")
+        await say(runtime, verified, "Send my notes to my solicitor", "Send my notes somewhere")
 
-        accepted = await say(runtime, session, "Yes please")
+        accepted = await say(runtime, verified, "Yes please")
 
         assert accepted == HANDOVER_MESSAGE
         assert len(runtime.escalations.store.all()) == 1
 
-    async def test_declining_it_does_not(self, runtime: Runtime, session: SessionState) -> None:
-        await say(runtime, session, "Send my notes to my solicitor", "Send my notes somewhere")
+    async def test_declining_it_does_not(self, runtime: Runtime, verified: SessionState) -> None:
+        await say(runtime, verified, "Send my notes to my solicitor", "Send my notes somewhere")
 
-        declined = await say(runtime, session, "No, it's fine")
+        declined = await say(runtime, verified, "No, it's fine")
 
         assert declined == DECLINED_MESSAGE
         assert not runtime.escalations.store.all()
 
     async def test_a_turn_that_worked_clears_the_count(
-        self, runtime: Runtime, session: SessionState
+        self, runtime: Runtime, verified: SessionState
     ) -> None:
         """Two failures either side of a good answer are not a pattern."""
-        await say(runtime, session, "Send my notes to my solicitor")
-        await say(runtime, session, "What time do you shut?")
+        await say(runtime, verified, "Send my notes to my solicitor")
+        await say(runtime, verified, "What time do you shut?")
 
-        after = await say(runtime, session, "Send my notes somewhere")
+        after = await say(runtime, verified, "Send my notes somewhere")
 
         assert after == FALLBACK_MESSAGE
 
@@ -180,31 +193,33 @@ class TestSayingTheSameThingTwice:
     """
 
     async def test_a_third_identical_reply_offers_a_person(
-        self, runtime: Runtime, session: SessionState
+        self, runtime: Runtime, verified: SessionState
     ) -> None:
+        # Asked after verification, so the first asking is not prefixed with
+        # "you're verified" and the three can be compared as they are.
         # The question is asked once by the look-up itself, and again when
         # "the one for my chest" resolves to nothing.
-        asked_once = await say(runtime, session, "What does my prescription say?", IDENTIFY)
+        asked_once = await say(runtime, verified, "What does my prescription say?")
         assert "Which medication did you mean?" in asked_once
 
-        asked_twice = await say(runtime, session, "the one for my chest")
-        a_third_time = await say(runtime, session, "the one for my chest")
+        asked_twice = await say(runtime, verified, "the one for my chest")
+        a_third_time = await say(runtime, verified, "the one for my chest")
 
         assert asked_twice == asked_once, "the fixture no longer produces a loop"
         assert a_third_time == STUCK_MESSAGE
 
-    async def test_and_then_hands_over(self, runtime: Runtime, session: SessionState) -> None:
-        await say(runtime, session, "What does my prescription say?", IDENTIFY)
+    async def test_and_then_hands_over(self, runtime: Runtime, verified: SessionState) -> None:
+        await say(runtime, verified, "What does my prescription say?")
         for _ in range(2):
-            await say(runtime, session, "the one for my chest")
+            await say(runtime, verified, "the one for my chest")
 
-        assert await say(runtime, session, "yes please") == HANDOVER_MESSAGE
+        assert await say(runtime, verified, "yes please") == HANDOVER_MESSAGE
 
     async def test_a_reply_that_changes_does_not_count(
         self, runtime: Runtime, session: SessionState
     ) -> None:
         """Re-asking once is normal, and often works."""
-        await say(runtime, session, "What does my prescription say?", IDENTIFY)
+        await say(runtime, session, "What does my prescription say?", *IDENTIFY)
         await say(runtime, session, "the one for my chest")
 
         answered = await say(runtime, session, "Metformin")
@@ -235,7 +250,7 @@ class TestChangingTheSubject:
     async def test_it_puts_down_what_it_was_doing(
         self, moving_on: Runtime, session: SessionState
     ) -> None:
-        await say(moving_on, session, "I'd like to book a follow up", IDENTIFY)
+        await say(moving_on, session, "I'd like to book a follow up", *IDENTIFY)
         assert session.active_workflow == "existing_patient_booking"
 
         moved = await say(moving_on, session, "actually, sort out my repeat")
@@ -247,7 +262,7 @@ class TestChangingTheSubject:
         self, moving_on: Runtime, session: SessionState
     ) -> None:
         """Coming back to it later must not resume against stale times."""
-        await say(moving_on, session, "I'd like to book a follow up", IDENTIFY)
+        await say(moving_on, session, "I'd like to book a follow up", *IDENTIFY)
         assert session.workflow_state.get("existing_patient_booking.offers")
 
         await say(moving_on, session, "actually, sort out my repeat")
@@ -259,7 +274,7 @@ class TestChangingTheSubject:
         self, runtime: Runtime, session: SessionState
     ) -> None:
         """Mock mode is rules-only, and a booking in progress stays one."""
-        await say(runtime, session, "I'd like to book a follow up", IDENTIFY)
+        await say(runtime, session, "I'd like to book a follow up", *IDENTIFY)
 
         await say(runtime, session, "actually, sort out my repeat")
 
@@ -272,7 +287,7 @@ class TestChangingTheSubject:
         runtime.orchestrator.extractor = _Scripted(
             {"cancel it instead": (Intent.CANCEL_APPOINTMENT, True)}
         )
-        await say(runtime, session, "When is my appointment?", IDENTIFY)
+        await say(runtime, session, "When is my appointment?", *IDENTIFY)
         await say(runtime, session, "I'd like to move it")
 
         await say(runtime, session, "cancel it instead")
@@ -315,56 +330,56 @@ class TestEndingTheCall:
 
     async def test_a_completed_request_asks(self, runtime: Runtime, session: SessionState) -> None:
         answered = await say(
-            runtime, session, "What does my prescription say?", IDENTIFY, "Metformin"
+            runtime, session, "What does my prescription say?", *IDENTIFY, "Metformin"
         )
 
         assert "One tablet twice daily" in answered
         assert ANYTHING_ELSE in answered
 
-    async def test_no_ends_the_call(self, runtime: Runtime, session: SessionState) -> None:
-        await say(runtime, session, "Are you open on Saturday?")
+    async def test_no_ends_the_call(self, runtime: Runtime, verified: SessionState) -> None:
+        await say(runtime, verified, "Are you open on Saturday?")
 
-        goodbye = await say(runtime, session, "No, that's everything thanks")
+        goodbye = await say(runtime, verified, "No, that's everything thanks")
 
         assert goodbye == GOODBYE_MESSAGE
-        assert not session.is_active, "the line was left open after the caller finished"
+        assert not verified.is_active, "the line was left open after the caller finished"
 
     @pytest.mark.parametrize(
         "utterance",
         ["No thanks", "That's all, thanks", "Nope, that's it", "Nothing else", "No, I'm done"],
     )
     async def test_the_ways_people_say_it(
-        self, runtime: Runtime, session: SessionState, utterance: str
+        self, runtime: Runtime, verified: SessionState, utterance: str
     ) -> None:
-        await say(runtime, session, "Are you open on Saturday?")
+        await say(runtime, verified, "Are you open on Saturday?")
 
-        assert await say(runtime, session, utterance) == GOODBYE_MESSAGE
+        assert await say(runtime, verified, utterance) == GOODBYE_MESSAGE
 
     async def test_yes_does_not_read_the_menu_back(
-        self, runtime: Runtime, session: SessionState
+        self, runtime: Runtime, verified: SessionState
     ) -> None:
         """They have just used the agent. They know what it does."""
-        await say(runtime, session, "Are you open on Saturday?")
+        await say(runtime, verified, "Are you open on Saturday?")
 
-        assert await say(runtime, session, "Yes actually") == MORE_HELP_MESSAGE
-        assert session.is_active
+        assert await say(runtime, verified, "Yes actually") == MORE_HELP_MESSAGE
+        assert verified.is_active
 
     async def test_saying_the_next_thing_instead_of_yes_works(
-        self, runtime: Runtime, session: SessionState
+        self, runtime: Runtime, verified: SessionState
     ) -> None:
         """Most callers never answer the question; they just carry on."""
-        await say(runtime, session, "Are you open on Saturday?")
+        await say(runtime, verified, "Are you open on Saturday?")
 
-        answer = await say(runtime, session, "Where are you?")
+        answer = await say(runtime, verified, "Where are you?")
 
         assert "Oakwood Avenue" in answer
-        assert session.is_active
+        assert verified.is_active
 
     async def test_an_escalation_is_not_asked(
-        self, runtime: Runtime, session: SessionState
+        self, runtime: Runtime, verified: SessionState
     ) -> None:
         """The call is on its way to a person; there is nothing else to offer."""
-        answer = await say(runtime, session, "Can I speak to someone please?")
+        answer = await say(runtime, verified, "Can I speak to someone please?")
 
         assert ANYTHING_ELSE not in answer
 
@@ -372,7 +387,7 @@ class TestEndingTheCall:
         self, runtime: Runtime, session: SessionState
     ) -> None:
         """A cancellation offers to rebook, and that offer must survive."""
-        cancelled = await say(runtime, session, "I need to cancel my appointment", IDENTIFY, "Yes")
+        cancelled = await say(runtime, session, "I need to cancel my appointment", *IDENTIFY, "Yes")
 
         assert "Would you like to rebook now?" in cancelled
         assert ANYTHING_ELSE not in cancelled

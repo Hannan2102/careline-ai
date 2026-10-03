@@ -45,7 +45,7 @@ function Chart({ reference }: { reference: string }) {
                 {data.medications.map((medication) => (
                   <li
                     key={medication.medication_request_id}
-                    className="rounded border border-edge/60 bg-ink/40 p-3"
+                    className="rounded border border-edge/60 bg-ink p-3"
                   >
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-medium">{medication.display_name}</span>
@@ -125,7 +125,7 @@ export default function PatientsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold">Patients</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-strong">Patients</h1>
         <p className="mt-1 text-sm text-muted">
           The synthetic roster, read through the same EHR interface the agent uses. Every
           person on this page is invented.

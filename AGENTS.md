@@ -90,7 +90,7 @@ model output can set it.
 
 | Workflow | Requires verification |
 |---|---|
-| `verification` | — |
+| `identity` (the opening steps, ADR 010) | — |
 | `existing_patient_booking` | ✅ |
 | `new_patient_booking` | — (creates the record) |
 | `appointment_management` | ✅ |

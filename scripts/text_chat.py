@@ -37,27 +37,66 @@ SCRIPTS: dict[str, list[str]] = {
     "demo1": [
         "Hi, I'd like to schedule a diabetes follow-up with Dr. Patel next week",
         "My name is John Smith and I was born 15 February 1985",
+        "Yes",
+        "Yes",
         "The first one please",
         "Yes",
     ],
     "demo2": [
         "I forgot how much Metformin I'm supposed to take",
         "I'm John Smith, date of birth 1985-02-15",
+        "Yes",
+        "Yes",
     ],
     "demo3": [
         "My blood pressure medicine makes me dizzy. Should I take half?",
     ],
-    "demo5": ["Are you open on Saturday?"],
+    "demo5": ["Are you open on Saturday?", "John Smith", "Yes", "15 February 1985", "Yes"],
     "demo6": [
         "When is my appointment?",
         "I'm Jane Doe, born 1 January 1970",
+        "Yes",
+        "Yes",
         "Jane Doe, 01/01/1970",
+        "Yes",
+        "Yes",
         "Jane Doe, born 1970-01-01",
+        "Yes",
+        "Yes",
     ],
     "refill": [
         "I need a refill on my metformin",
         "My name is John Smith, born 15 February 1985",
+        "Yes",
+        "Yes",
         "Yes please",
+    ],
+    # The identity-first opening (ADR 010), with each repair it can make: a
+    # misheard surname spelled back and corrected, and a date that is two
+    # different birthdays depending on which way round it is read.
+    "identity": [
+        "Hi, when is my next appointment?",
+        "Maria Garsia",
+        "No, it's G A R C I A",
+        "Yes",
+        "11/03/1972",
+        "November",
+        "That's right",
+    ],
+    # A new patient: registered with the same read-backs, a phone number read
+    # out in two pieces, then the menu -- and the first booking is the long one.
+    "register": [
+        "Hi, I'm new and I'd like to register",
+        "Nina Okafor",
+        "Yes",
+        "The third of May, nineteen ninety",
+        "Yes",
+        "Five five five",
+        "oh one nine, oh two three four",
+        "I'd like to book an appointment",
+        "A general check-up",
+        "The first one",
+        "Yes",
     ],
 }
 
@@ -114,6 +153,9 @@ async def main() -> int:
         f"AI mode: {settings.ai_mode.value} | session: {session.session_id}{RESET}"
     )
     print(f"{DIM}Type 'quit' to end.{RESET}\n")
+    # The same opening line a caller hears, so a terminal conversation starts
+    # where a phone call does: with the agent asking for a name (ADR 010).
+    print(f"{YELLOW}Agent:{RESET} {runtime.orchestrator.greet(session)}\n")
 
     utterances = SCRIPTS[args.script] if args.script else None
     index = 0

@@ -69,17 +69,33 @@ class TestAgentEndpoints:
     """The dev chat endpoint: the same runtime the CLI and voice agent use."""
 
     def test_a_conversation_over_http(self, client: TestClient) -> None:
-        session_id = client.post("/api/agent/sessions", json={}).json()["session_id"]
+        started = client.post("/api/agent/sessions", json={}).json()
+        session_id = started["session_id"]
+        # Opened the way a phone call is (ADR 010).
+        assert started["greeting"].endswith(
+            "Are you an existing patient, or are you new and would like to register?"
+        )
 
-        opening = client.post(
+        client.post(
             f"/api/agent/sessions/{session_id}/turns",
-            json={"utterance": "Are you open on Saturday?"},
+            json={"utterance": "I'm an existing patient"},
+        )
+        opening = client.post(
+            f"/api/agent/sessions/{session_id}/turns", json={"utterance": "john smith"}
         )
         assert opening.status_code == 200
         body = opening.json()
-        assert "closed on Saturday and Sunday" in body["message"]
-        assert body["trace"]["intent"] == "clinic_faq"
+        assert "J-O-H-N" in body["message"]
+        assert body["trace"]["workflow"] == "identity"
+        assert body["trace"]["workflow_state"] == "CONFIRMING_NAME"
         assert body["session"]["verification"] == "UNVERIFIED"
+
+        for utterance in ("yes", "15 February 1985", "yes"):
+            body = client.post(
+                f"/api/agent/sessions/{session_id}/turns", json={"utterance": utterance}
+            ).json()
+        assert body["message"] == "Thanks, John, you're verified. How can I help you today?"
+        assert body["session"]["verification"] == "VERIFIED"
 
     def test_the_trace_is_returned_with_each_turn(self, client: TestClient) -> None:
         session_id = client.post("/api/agent/sessions", json={}).json()["session_id"]

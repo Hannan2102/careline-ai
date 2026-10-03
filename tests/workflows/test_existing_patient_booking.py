@@ -73,7 +73,7 @@ class TestHappyPath:
         """DEMO.md scenario 1, turn by turn."""
         opening = await workflow.start(session)
         assert opening.state == BookingState.COLLECTING_IDENTITY.value
-        assert opening.awaiting is AwaitedInput.IDENTITY
+        assert opening.awaiting is AwaitedInput.NAME
 
         identified = await _verify(workflow, session)
         assert session.is_verified is True

@@ -61,6 +61,7 @@ class VoiceSession:
         on_interrupt: Callable[[], Awaitable[None]] | None = None,
         drain: Callable[[], Awaitable[None]] | None = None,
         timings_sink: Callable[[str, float | None, float | None], Awaitable[None]] | None = None,
+        on_say: Callable[[str], Awaitable[None]] | None = None,
         greeting: str | None = GREETING,
     ) -> None:
         self.session = session
@@ -89,6 +90,9 @@ class VoiceSession:
         #: stays testable without a database and the numbers can be sent
         #: somewhere else entirely (a metrics sink) without touching it.
         self.timings_sink = timings_sink
+        #: Told what the agent is about to say, in its written form, so a
+        #: client can show the conversation as well as play it.
+        self.on_say = on_say
 
         #: Wall-clock of the last audio frame handed to the recogniser, and the
         #: recognition lag derived from it when a final transcript lands.
@@ -160,7 +164,7 @@ class VoiceSession:
         """Run any utterance left buffered when the stream ended."""
         if self.manager.state is VoiceState.CLOSED:
             return
-        await self.manager.tick(now=datetime.now(UTC) + self.manager.timings.end_of_utterance)
+        await self.manager.tick(now=datetime.now(UTC) + self.manager.longest_wait)
 
     async def _tick_forever(self) -> None:
         while self.manager.state is not VoiceState.CLOSED:
@@ -194,6 +198,11 @@ class VoiceSession:
             yield chunk
 
     async def _emit(self, text: str) -> None:
+        if self.on_say is not None:
+            try:
+                await self.on_say(text)
+            except Exception as exc:  # a display hook must never cost the caller audio
+                logger.warning("voice_on_say_failed", error=str(exc))
         loop = asyncio.get_running_loop()
         started = loop.time()
         first_audio_ms: float | None = None

@@ -8,6 +8,13 @@ this class exists rather than each workflow being called directly.
 
 Text and voice share this object (ADR 005). Voice adds STT before
 :meth:`Orchestrator.handle_turn` and TTS after it, and nothing else changes.
+
+Every call opens with identity (ADR 010). Until the caller is verified, each
+turn that safety allows goes to the shared identity steps -- name spelled back,
+date of birth read back, then the record -- and whatever the caller asked for
+on the way is remembered and acted on the moment they are verified. That is
+the orchestrator's job rather than each workflow's, so there is exactly one
+way into a verified session, whichever entry point opened the call.
 """
 
 from __future__ import annotations
@@ -23,16 +30,18 @@ from app.agents.extraction import (
     ExtractionContext,
     RuleBasedExtractor,
     TurnExtractor,
+    asks_to_book,
+    spoken_digits,
 )
 from app.agents.intents import Intent
 from app.agents.state import SessionState
 from app.agents.trace import StageTimings, TraceStore, TurnTrace
 from app.ai.usage import UsageLedger
-from app.config.clinic import CLINIC_NAME
+from app.config.clinic import CLINIC_NAME, GREETING
 from app.config.settings import Settings, get_settings
 from app.observability.logging import bind_trace, clear_trace, get_logger
 from app.safety.models import SafetyOutcome
-from app.schemas.domain import AuditAction, EscalationCategory
+from app.schemas.domain import AppointmentType, AuditAction, EscalationCategory
 from app.services.audit_service import AuditService
 from app.services.base import NotVerifiedError
 from app.services.coverage_service import CoverageService
@@ -62,6 +71,16 @@ from app.workflows.existing_patient_booking import (
     BookingInput,
     ExistingPatientBookingWorkflow,
 )
+from app.workflows.identity import (
+    ASK_NAME_FOR_REQUEST,
+    IDENTITY_HANDOVER,
+    LOCKED_OUT,
+    IdentityCollector,
+    IdentityInput,
+    IdentityOutcome,
+    IdentityResult,
+    IdentityStep,
+)
 from app.workflows.medication_lookup import MedicationLookupInput, MedicationLookupWorkflow
 from app.workflows.new_patient import NewPatientInput, NewPatientWorkflow
 from app.workflows.refill_request import RefillRequestInput, RefillRequestWorkflow
@@ -75,6 +94,8 @@ def _carried_something(extracted: ExtractedTurn) -> bool:
         (
             extracted.full_name,
             extracted.date_of_birth,
+            extracted.dob_candidates,
+            extracted.spelled,
             extracted.second_factor_value,
             extracted.medication_name,
             extracted.practitioner_name,
@@ -95,6 +116,57 @@ class _Direct:
 
 #: Where a pending yes-or-no is kept between turns.
 PENDING_OFFER = "_offer"
+
+#: What the trace calls the identity steps, in the workflow column.
+IDENTITY_WORKFLOW = "identity"
+
+#: What the caller asked for before they were verified, kept until they are.
+#: Under the identity namespace, so it goes when the conversation does.
+PENDING_INTENT = "_identity.pending_intent"
+
+#: Said once verified, when nothing was asked for on the way.
+HOW_CAN_I_HELP = "How can I help you today?"
+
+#: Whether the caller is already a patient: "existing" or "new". The first
+#: thing every call settles, because the answer chooses between verifying
+#: them against the record and registering them.
+PATIENT_STATUS = "_identity.patient_status"
+_STATUS_REASKED = "_identity.status_reasked"
+
+ASK_STATUS_FOR_REQUEST = (
+    "I can help with that. First, are you an existing patient, or are you new and "
+    "would like to register?"
+)
+#: Asked again as a yes-or-no, which is easier to answer than the either-or.
+ASK_STATUS_AGAIN = "Sorry — have you been a patient with us before?"
+ASK_NAME_EXISTING = "Great. Could I take your first and last name?"
+
+#: Requests only somebody already on the record can make, so saying one
+#: answers the opening question: nobody new has an appointment to cancel.
+_EXISTING_PATIENT_INTENTS = frozenset(
+    {
+        Intent.LOOKUP_APPOINTMENT,
+        Intent.CANCEL_APPOINTMENT,
+        Intent.RESCHEDULE_APPOINTMENT,
+        Intent.MEDICATION_LOOKUP,
+        Intent.REFILL_REQUEST,
+        Intent.COVERAGE_LOOKUP,
+    }
+)
+
+#: Where the first part of a number read out in pieces waits for the rest.
+DICTATION_CARRY = "_dictation_carry"
+
+#: How many digits a complete answer has, for the questions that take digits.
+_DIGITS_WANTED = {AwaitedInput.PHONE: 10, AwaitedInput.SECOND_FACTOR: 4}
+
+#: Said when part of a number has arrived and the rest has not. Short, so it
+#: does not talk over a caller who was only drawing breath.
+GO_ON = "Mm-hm, go on."
+
+#: An unverified caller who wants more after a clinic question (the
+#: ``identity_first_allow_faq`` path): anything further needs a name.
+ASK_NAME_FOR_MORE = "Of course. First, could I take your first and last name?"
 
 #: Said when the request is a real one the agent has no way to serve.
 #:
@@ -170,6 +242,18 @@ TURN_LIMIT_MESSAGE = (
     "properly. Let me pass you to a member of our staff."
 )
 
+#: Questions whose answer is read out a piece at a time.
+_DICTATION = frozenset(
+    {
+        AwaitedInput.NAME_SPELLING,
+        AwaitedInput.NAME_CONFIRMATION,
+        AwaitedInput.DATE_OF_BIRTH,
+        AwaitedInput.DOB_CONFIRMATION,
+        AwaitedInput.SECOND_FACTOR,
+        AwaitedInput.PHONE,
+    }
+)
+
 MANAGEMENT_INTENTS: dict[Intent, ManagementAction] = {
     Intent.LOOKUP_APPOINTMENT: ManagementAction.LOOKUP,
     Intent.CANCEL_APPOINTMENT: ManagementAction.CANCEL,
@@ -235,11 +319,37 @@ class Orchestrator:
             # EHR provider than the one identity is checked against.
             verification.patients,
             verification,
-            self.booking,
             escalations,
             self.audit,
         )
         self.faq = ClinicFaqWorkflow(escalations)
+        self.identity = IdentityCollector(verification, self.audit)
+
+    # ---------------------------------------------------------- the opening
+    def greet(self, session: SessionState) -> str:
+        """What the caller hears before saying anything, and what it asked.
+
+        Every entry point opens a call with this -- voice speaks it, the CLI
+        prints it, the HTTP API returns it with the new session -- so the first
+        turn is an answer to "could I take your first and last name?" however
+        the call was started. Recording that here is belt and braces:
+        ``_context`` would derive it anyway for an unverified session.
+        """
+        if self._identity_pending(session):
+            session.workflow_state["_awaiting"] = AwaitedInput.PATIENT_STATUS.value
+        return GREETING
+
+    def expects_dictation(self, session: SessionState) -> bool:
+        """Whether the caller is being asked to read something out piece by piece.
+
+        Letters of a name, digits of a date or a phone number. The voice layer
+        waits longer for these before answering, because callers pause between
+        the pieces and the recogniser reports every pause as the end of what
+        they said. It asks here rather than reading session state itself:
+        which questions are dictation is a fact about the conversation, and
+        the turn manager is only allowed to know about timing.
+        """
+        return self._context(session).awaiting in _DICTATION
 
     # ------------------------------------------------------------ one turn
     async def handle_turn(
@@ -288,12 +398,20 @@ class Orchestrator:
             # 2. Extraction, with the outstanding question as context.
             extraction_started = time.perf_counter()
             context = self._context(session)
-            extracted = await self.extractor.aextract(utterance, context)
+            heard = self._with_carry(session, utterance, context)
+            extracted = await self.extractor.aextract(heard, context)
             extraction_ms = (time.perf_counter() - extraction_started) * 1000
 
             # 3. Route and execute.
             workflow_started = time.perf_counter()
-            response, direct = await self._answer(session, extracted, context, utterance, moment)
+            partial = (
+                self._hold_partial_number(session, heard, context)
+                if spoken_digits(utterance)
+                else None
+            )
+            response, direct = partial or await self._answer(
+                session, extracted, context, heard, moment
+            )
             workflow_ms = (time.perf_counter() - workflow_started) * 1000
 
             message = self._break_a_loop(session, self._offer_more_help(session, response, direct))
@@ -335,6 +453,10 @@ class Orchestrator:
         offers a person rather than reciting the menu at somebody for the
         second time.
         """
+        gated = await self._identity_gate(session, extracted, utterance, now)
+        if gated is not None:
+            return gated
+
         answered = await self._answer_an_offer(session, extracted, utterance, now)
         if answered is not None:
             return answered
@@ -342,6 +464,15 @@ class Orchestrator:
         response = await self._route(session, extracted, context, utterance, now)
         if response is not None:
             session.workflow_state.pop(UNKNOWN_STREAK, None)
+            if self.registration.just_registered(response):
+                # Registered. If they said what they wanted before they gave
+                # their details, do that now; otherwise the registration's own
+                # reply already says what the agent can do for them.
+                resumed = await self._resume_held_request(
+                    session, self.registration.registered_line(session), now
+                )
+                if resumed is not None:
+                    return resumed, _Direct(FALLBACK_MESSAGE)
             return response, _Direct(FALLBACK_MESSAGE)
         return None, self._nothing_matched(session, extracted)
 
@@ -382,6 +513,323 @@ class Orchestrator:
                 _Direct(FALLBACK_MESSAGE),
             )
         return None, self._hand_over(session, utterance)
+
+    # ------------------------------------------------------ split numbers
+    @staticmethod
+    def _with_carry(session: SessionState, utterance: str, context: ExtractionContext) -> str:
+        """This turn, with the start of a number from the turn before.
+
+        Found on a live call: the caller said "One", paused, then read out the
+        other nine digits. The recogniser made two turns of it, neither held
+        ten digits, so neither was a phone number -- and after two identical
+        re-asks the agent offered to pass the caller to a person for reading
+        out their own phone number.
+        """
+        carried = session.workflow_state.pop(DICTATION_CARRY, None)
+        if isinstance(carried, str) and context.awaiting in _DIGITS_WANTED:
+            return f"{carried} {utterance}"
+        return utterance
+
+    @staticmethod
+    def _hold_partial_number(
+        session: SessionState, heard: str, context: ExtractionContext
+    ) -> tuple[WorkflowResponse | None, _Direct] | None:
+        """Keep the first part of a number and wait for the rest.
+
+        Only for a question that takes a fixed number of digits, and only while
+        fewer have arrived than it needs. Nothing is checked or written on a
+        partial number; the next turn's digits are joined on and the whole is
+        read as one answer. A turn that adds no digits is never held -- "that's
+        all of it" after three digits goes to the workflow, which asks for the
+        number again, rather than to "go on" for ever.
+        """
+        wanted = _DIGITS_WANTED.get(context.awaiting) if context.awaiting else None
+        if wanted is None:
+            return None
+        found = len(spoken_digits(heard))
+        if found == 0 or found >= wanted:
+            return None
+        session.workflow_state[DICTATION_CARRY] = heard
+        assert context.awaiting is not None
+        return (
+            WorkflowResponse(
+                workflow=session.active_workflow or IDENTITY_WORKFLOW,
+                state="DICTATING",
+                status=WorkflowStatus.AWAITING_INPUT,
+                message=GO_ON,
+                awaiting=context.awaiting,
+            ),
+            _Direct(GO_ON),
+        )
+
+    # ------------------------------------------------------------- identity
+    def _identity_pending(self, session: SessionState) -> bool:
+        """Whether this turn belongs to the identity steps.
+
+        Every unverified call, except a registration -- which takes the same
+        steps itself, through the same collector -- and a call already on its
+        way to a person.
+        """
+        if session.is_verified or session.is_locked_out or not session.is_active:
+            return False
+        if session.active_workflow == self.registration.name:
+            return False
+        return self.identity.step(session) not in (
+            IdentityStep.HANDED_OVER,
+            IdentityStep.LOCKED_OUT,
+            IdentityStep.VERIFIED,
+        )
+
+    async def _identity_gate(
+        self,
+        session: SessionState,
+        extracted: ExtractedTurn,
+        utterance: str,
+        now: datetime,
+    ) -> tuple[WorkflowResponse | None, _Direct] | None:
+        """Take the caller's identity before anything else (ADR 010).
+
+        ``None`` hands the turn on to ordinary routing: a verified caller, a
+        caller who has said they are new (registration collects the same
+        details through the same steps), a clinic question when
+        ``identity_first_allow_faq`` allows one, and the yes or no to an offer
+        the agent made.
+        """
+        state = session.workflow_state
+
+        if not self._identity_pending(session):
+            if session.is_verified or extracted.intent in (Intent.CLINIC_FAQ, Intent.NEW_PATIENT):
+                return None
+            if session.is_locked_out:
+                return None, _Direct(LOCKED_OUT)
+            if self.identity.step(session) is IdentityStep.HANDED_OVER:
+                # Already on the way to a person. Nothing behind the gate is
+                # reachable from here, and asking for a name a fourth time is
+                # the loop the handover was for.
+                return None, _Direct(IDENTITY_HANDOVER)
+            return None
+
+        if extracted.intent is Intent.NEW_PATIENT:
+            # The caller has to say this (ADR 009). What they have already
+            # confirmed comes with them: registration reads the same steps.
+            state[PATIENT_STATUS] = "new"
+            if asks_to_book(utterance) and PENDING_INTENT not in state:
+                # "...can I get an appointment?" -- booked once registered.
+                state[PENDING_INTENT] = {"intent": Intent.BOOK_APPOINTMENT.value}
+            return None
+
+        step = self.identity.step(session)
+        if (
+            self.settings.identity_first_allow_faq
+            and extracted.intent is Intent.CLINIC_FAQ
+            and step is IdentityStep.ASKING_NAME
+            and not self.identity.has_started(session)
+        ):
+            return None
+
+        offer = state.get(PENDING_OFFER)
+        if offer is not None and extracted.confirm is not None:
+            if offer == Offer.ANYTHING_ELSE.value and extracted.confirm is True:
+                state.pop(PENDING_OFFER, None)
+                return self._identity_reply(
+                    session,
+                    IdentityResult(
+                        outcome=IdentityOutcome.NEEDS_IDENTITY,
+                        message=ASK_NAME_FOR_MORE,
+                        awaiting=AwaitedInput.NAME,
+                        step=IdentityStep.ASKING_NAME,
+                    ),
+                )
+            # "No, that's everything", or yes to a person: the offer's to answer.
+            return None
+        state.pop(PENDING_OFFER, None)
+
+        if state.get(PATIENT_STATUS) is None and not self.identity.has_started(session):
+            settled = await self._settle_patient_status(session, extracted, utterance, now)
+            if settled is not None:
+                return settled
+
+        request_noted = self._note_request(session, extracted, step)
+        result = await self.identity.advance(
+            session, self._identity_input(extracted, utterance, request_noted=request_noted)
+        )
+        if result.outcome is IdentityOutcome.VERIFIED:
+            return await self._resume_after_verification(session, result, now)
+        return self._identity_reply(session, result)
+
+    async def _settle_patient_status(
+        self,
+        session: SessionState,
+        extracted: ExtractedTurn,
+        utterance: str,
+        now: datetime,
+    ) -> tuple[WorkflowResponse | None, _Direct] | None:
+        """Answer the opening question: existing patient, or new?
+
+        Settled by what the caller said, in this order: saying so; giving a
+        name, which only somebody expecting to be looked up does; asking for
+        something only a patient can have, like an appointment to cancel. A
+        new patient goes straight to registration, where the same identity
+        steps take their details. ``None`` means an existing patient whose
+        turn should now go on to the identity steps.
+        """
+        state = session.workflow_state
+        status = extracted.patient_status
+        if status is None and extracted.full_name is not None:
+            status = "existing"
+        if status is None and state.get(_STATUS_REASKED) and extracted.confirm is not None:
+            # The re-ask is "have you been a patient with us before?"
+            status = "existing" if extracted.confirm else "new"
+        if status is None and extracted.intent in _EXISTING_PATIENT_INTENTS:
+            status = "existing"
+
+        noted = self._note_request(session, extracted, IdentityStep.ASKING_NAME)
+
+        if status == "new":
+            state[PATIENT_STATUS] = "new"
+            await self.registration.start(session)
+            return (
+                await self.registration.advance(
+                    session, self._registration_input(extracted, utterance), now=now
+                ),
+                _Direct(FALLBACK_MESSAGE),
+            )
+
+        if status is None:
+            first_time = not state.get(_STATUS_REASKED)
+            state[_STATUS_REASKED] = True
+            message = ASK_STATUS_FOR_REQUEST if noted and first_time else ASK_STATUS_AGAIN
+            return self._identity_reply(
+                session,
+                IdentityResult(
+                    outcome=IdentityOutcome.NEEDS_IDENTITY,
+                    message=message,
+                    awaiting=AwaitedInput.PATIENT_STATUS,
+                    step=IdentityStep.ASKING_STATUS,
+                ),
+            )
+
+        state[PATIENT_STATUS] = "existing"
+        if extracted.full_name is None and extracted.date_of_birth is None:
+            return self._identity_reply(
+                session,
+                IdentityResult(
+                    outcome=IdentityOutcome.NEEDS_IDENTITY,
+                    message=ASK_NAME_FOR_REQUEST if noted else ASK_NAME_EXISTING,
+                    awaiting=AwaitedInput.NAME,
+                    step=IdentityStep.ASKING_NAME,
+                ),
+            )
+        return None
+
+    @staticmethod
+    def _note_request(session: SessionState, extracted: ExtractedTurn, step: IdentityStep) -> bool:
+        """Remember what the caller wants, to act on once they are verified.
+
+        "I need to reschedule, my name is John Smith" is two answers in one
+        breath, and the second is the reason for the call. Only the first
+        request is kept, and only while the name is being asked for: after
+        that, every turn is an answer to an identity question.
+        """
+        if step is not IdentityStep.ASKING_NAME or extracted.intent in (
+            Intent.UNKNOWN,
+            Intent.NEW_PATIENT,
+        ):
+            return False
+        if PENDING_INTENT in session.workflow_state:
+            return False
+        session.workflow_state[PENDING_INTENT] = {
+            "intent": extracted.intent.value,
+            "reason": extracted.reason,
+            "practitioner_name": extracted.practitioner_name,
+            "medication_name": extracted.medication_name,
+            "faq_topic": extracted.faq_topic,
+            "list_all": extracted.list_all,
+        }
+        logger.info(
+            "request_held_for_identity",
+            session_id=session.session_id,
+            intent=extracted.intent.value,
+        )
+        return extracted.full_name is None
+
+    async def _resume_after_verification(
+        self, session: SessionState, result: IdentityResult, now: datetime
+    ) -> tuple[WorkflowResponse | None, _Direct]:
+        """Verified: do what they rang about, or ask what that is."""
+        resumed = await self._resume_held_request(session, result.message, now)
+        if resumed is not None:
+            return resumed, _Direct(FALLBACK_MESSAGE)
+        return self._identity_reply(
+            session,
+            result.model_copy(update={"message": f"{result.message} {HOW_CAN_I_HELP}".strip()}),
+        )
+
+    async def _resume_held_request(
+        self, session: SessionState, prefix: str, now: datetime
+    ) -> WorkflowResponse | None:
+        """Act on the request made before the caller was verified or registered."""
+        held = session.workflow_state.pop(PENDING_INTENT, None)
+        if not isinstance(held, dict):
+            return None
+        try:
+            intent = Intent(str(held.get("intent")))
+        except ValueError:
+            return None
+
+        def text(key: str) -> str | None:
+            value = held.get(key)
+            return value if isinstance(value, str) else None
+
+        resumed = ExtractedTurn(
+            intent=intent,
+            confidence=0.9,
+            reason=text("reason"),
+            practitioner_name=text("practitioner_name"),
+            medication_name=text("medication_name"),
+            faq_topic=text("faq_topic"),
+            list_all=bool(held.get("list_all")),
+        )
+        response = await self._route(session, resumed, ExtractionContext(), "", now)
+        if response is None:
+            return None
+        return response.model_copy(update={"message": f"{prefix} {response.message}".strip()})
+
+    @staticmethod
+    def _identity_reply(
+        session: SessionState, result: IdentityResult
+    ) -> tuple[WorkflowResponse | None, _Direct]:
+        """The identity steps' reply, shaped like a workflow's so the trace shows it."""
+        ended = result.outcome in (IdentityOutcome.HANDED_OVER, IdentityOutcome.LOCKED_OUT)
+        if ended:
+            session.active_workflow = None
+        step = result.step or IdentityStep.ASKING_NAME
+        return (
+            WorkflowResponse(
+                workflow=IDENTITY_WORKFLOW,
+                state=step.value,
+                status=WorkflowStatus.ESCALATED if ended else WorkflowStatus.AWAITING_INPUT,
+                message=result.message,
+                awaiting=None if ended else result.awaiting,
+                escalation_id=result.escalation_id,
+            ),
+            _Direct(result.message, escalation_id=result.escalation_id),
+        )
+
+    @staticmethod
+    def _identity_input(
+        extracted: ExtractedTurn, utterance: str, *, request_noted: bool = False
+    ) -> IdentityInput:
+        return IdentityInput(
+            utterance=utterance,
+            full_name=extracted.full_name,
+            spelled=extracted.spelled,
+            date_of_birth=extracted.date_of_birth,
+            dob_candidates=extracted.dob_candidates,
+            confirm=extracted.confirm,
+            second_factor_value=extracted.second_factor_value,
+            request_noted=request_noted,
+        )
 
     @staticmethod
     def _offer_more_help(
@@ -424,6 +872,9 @@ class Orchestrator:
         on the next turn, or say no and carry on; what changes is that a way
         out has been offered.
         """
+        if message == GO_ON:
+            # Not a loop: each one is a different piece of the same number.
+            return message
         last = session.workflow_state.get(LAST_REPLY)
         seen = session.workflow_state.get(REPLY_REPEATS, 0)
         repeats = (seen if isinstance(seen, int) else 0) + 1 if message == last else 1
@@ -507,6 +958,10 @@ class Orchestrator:
 
         match extracted.intent:
             case Intent.BOOK_APPOINTMENT:
+                if self.registration.first_visit_pending(session):
+                    # Registered this call: their first appointment is the
+                    # long one, whatever they say it is for.
+                    await self.booking.start(session, appointment_type=AppointmentType.NEW_PATIENT)
                 return await self.booking.advance(
                     session, self._booking_input(extracted, utterance), now=now
                 )
@@ -656,18 +1111,11 @@ class Orchestrator:
         return None
 
     # ------------------------------------------------------- input mapping
-    @staticmethod
-    def _registration_input(extracted: ExtractedTurn, utterance: str) -> NewPatientInput:
+    def _registration_input(self, extracted: ExtractedTurn, utterance: str) -> NewPatientInput:
         return NewPatientInput(
             utterance=utterance,
-            full_name=extracted.full_name,
-            date_of_birth=extracted.date_of_birth,
+            identity=self._identity_input(extracted, utterance),
             phone=extracted.phone,
-            # Only when it was asked for. Passing the whole utterance the way
-            # booking does would file "Hi, I've never been here before" as the
-            # reason for the visit, because that is the sentence that started
-            # the registration.
-            reason=extracted.reason,
         )
 
     @staticmethod
@@ -753,6 +1201,17 @@ class Orchestrator:
         last = session.workflow_state.get("_awaiting")
         if isinstance(last, str):
             awaiting = AwaitedInput(last)
+        elif self._identity_pending(session):
+            # The greeting asked its question before any turn existed to record
+            # that it had. Derived here rather than written at session start,
+            # so every way a call can open -- voice, the CLI, the HTTP API --
+            # is waiting for the answer without each having to remember to.
+            awaiting = (
+                AwaitedInput.PATIENT_STATUS
+                if session.workflow_state.get(PATIENT_STATUS) is None
+                and not self.identity.has_started(session)
+                else AwaitedInput.NAME
+            )
         return ExtractionContext(awaiting=awaiting, offers=offers)
 
     # -------------------------------------------------------------- record
@@ -838,6 +1297,10 @@ class Orchestrator:
             found["full_name"] = "<redacted>"
         if extracted.date_of_birth:
             found["date_of_birth"] = "<redacted>"
+        if extracted.dob_candidates:
+            found["date_of_birth_readings"] = str(len(extracted.dob_candidates))
+        if extracted.spelled:
+            found["spelled"] = "<redacted>"
         if extracted.second_factor_value:
             found["second_factor"] = "<redacted>"
         if extracted.medication_name:

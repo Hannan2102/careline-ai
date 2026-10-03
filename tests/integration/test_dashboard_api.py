@@ -15,7 +15,7 @@ from datetime import timedelta
 
 import httpx
 import pytest
-from tests.conftest import SEED_TODAY
+from tests.conftest import SEED_TODAY, verify_by_conversation
 
 from app.agents.factory import Runtime, build_runtime
 from app.api.deps import get_ehr
@@ -24,7 +24,8 @@ from app.db.engine import Database
 from app.ehr.base import EHRProvider
 from app.main import create_app
 
-IDENTIFY = "My name is John Smith and I was born 15 February 1985"
+#: Name and date of birth in one breath, then yes to each read-back (ADR 010).
+IDENTIFY = ("My name is John Smith and I was born 15 February 1985", "yes", "yes")
 WINDOW = {
     "start_date": SEED_TODAY.isoformat(),
     "end_date": (SEED_TODAY + timedelta(days=30)).isoformat(),
@@ -68,7 +69,7 @@ async def a_completed_call(runtime: Runtime) -> str:
     """A verified booking-lookup call, persisted. Returns its session id."""
     session = runtime.sessions.create()
     await runtime.orchestrator.handle_turn(session, "When is my appointment?")
-    await runtime.orchestrator.handle_turn(session, IDENTIFY)
+    await verify_by_conversation(runtime.orchestrator, session, now=None, lines=IDENTIFY)
     return session.session_id
 
 
@@ -80,7 +81,9 @@ class TestCalls:
 
         body = (await client.get("/api/calls")).json()
         call = next(c for c in body if c["session_id"] == session_id)
-        assert call["turns"] == 2
+        assert (
+            call["turns"] == 4
+        )  # the request, then name, its spelling and the date read-back (ADR 010)
         assert call["verification"] == "VERIFIED"
         assert call["patient_name"] == "John Smith"
         assert call["outcome"] == "in-progress"
@@ -121,7 +124,7 @@ class TestCalls:
         """A trailing "yes" carries no intent; the call is not about nothing."""
         session = runtime.sessions.create()
         await runtime.orchestrator.handle_turn(session, "When is my appointment?")
-        await runtime.orchestrator.handle_turn(session, IDENTIFY)
+        await verify_by_conversation(runtime.orchestrator, session, now=None, lines=IDENTIFY)
         await runtime.orchestrator.handle_turn(session, "yes")
 
         call = next(
@@ -161,7 +164,7 @@ class TestAgentTrace:
         session_id = await a_completed_call(runtime)
 
         trace = (await client.get(f"/api/calls/{session_id}/trace")).json()
-        assert [t["turn_number"] for t in trace["turns"]] == [1, 2]
+        assert [t["turn_number"] for t in trace["turns"]] == [1, 2, 3, 4]
 
         turn = trace["turns"][0]
         # The acceptance criterion for this phase: the trace renders every
@@ -201,7 +204,7 @@ class TestAgentTrace:
 
         trace = (await client.get(f"/api/calls/{session_id}/trace")).json()
         assert trace["unattributed_operations"] == []
-        verifying_turn = trace["turns"][1]
+        verifying_turn = trace["turns"][-1]  # the read-back confirmed, so the record is checked
         actions = [op["action"] for op in verifying_turn["operations"]]
         assert "verification.succeeded" in actions
         assert "appointment.read" in actions
@@ -254,7 +257,7 @@ class TestEscalationsAndRefills:
     ) -> None:
         session = runtime.sessions.create()
         await runtime.orchestrator.handle_turn(session, "I need a refill of my lisinopril")
-        await runtime.orchestrator.handle_turn(session, IDENTIFY)
+        await verify_by_conversation(runtime.orchestrator, session, now=None, lines=IDENTIFY)
         await runtime.orchestrator.handle_turn(session, "yes")
 
         body = (await client.get("/api/medications/refill-requests")).json()
@@ -320,7 +323,7 @@ class TestOverviewAndUsage:
 
         body = (await client.get("/api/overview")).json()
         assert body["calls"] == 1
-        assert body["turns"] == 2
+        assert body["turns"] == 4
         assert body["average_turn_ms"] > 0
         assert body["turns_by_intent"]
         assert body["actions"]["appointment.read"] >= 1

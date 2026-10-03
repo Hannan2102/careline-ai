@@ -1,6 +1,6 @@
 # Project status
 
-*Last updated: 2026-09-21*
+*Last updated: 2026-10-01*
 
 ## Current phase
 
@@ -278,6 +278,69 @@ call was a one-millisecond turn.
   my lisinopril" was refused all along, which is why it had never shown up. Now any
   double/halve/triple is refused except "double check" and "double book"
 
+**Identity-first opening** ✅ *(from demo feedback, 2026-10-01 —
+[ADR 010](docs/decisions/010-identity-first-opening.md))*
+- **What the demo showed.** A caller who was certainly on file failed verification
+  twice. The recogniser had written a spelling of their surname that nobody said, and
+  nothing in the call showed them what the agent had heard, so repeating themselves
+  produced the same transcript and the same failure. Separately, a date given as digits
+  was read day-first by `dateutil(dayfirst=True)`, so "03/04/1990" became April at a US
+  clinic, without a word, and was submitted
+- **Every call now opens with identity.** The greeting asks for a first and last name
+  instead of "how can I help?". The orchestrator sends every turn safety allows to the
+  shared identity steps until the caller is verified. A request made along the way is
+  held and acted on the moment they are, so "I need to reschedule, my name is John Smith"
+  ends at the reschedule offer, not at "how can I help you today?"
+- **The name is spelled back, letter by letter.** First, middle and last names are
+  spelled separately and labelled, with apostrophes, hyphens and spaces named.
+  Corrections are read by a deterministic letter parser (`agents/spelling.py`) that
+  handles:
+  - capitals, and letters joined by hyphens or dots;
+  - recogniser homophones ("see", "are", "why", "double you");
+  - "S as in Sam";
+  - the NATO alphabet.
+  A free-form "Jon without the h" asks for the spelling rather than guessing it
+- **The date of birth is read back with the month as a word**, always. The new parser
+  (`agents/dob_parser.py`) tries every reading of what was said and keeps only real dates
+  in a plausible lifetime: one survivor is confident, two are asked about ("March fourth
+  or April third?"), and none gets a hint. It handles:
+  - spoken years and ordinals, and digits read one at a time;
+  - compact strings ("01151985");
+  - the "19 70 8" recogniser artefact;
+  - two-digit years pivoted so they are never in the future.
+  `dayfirst` is gone
+- **Verification is unchanged** and reached the same way: one identical reply for
+  unknown and wrong details, the second factor, the three-attempt lockout, and every
+  audit event. Three rejected read-backs of either half hand over to the front desk,
+  audited as `identity.not_confirmed`
+- **Registration reuses what was confirmed**, including after a failed match, and
+  otherwise runs the same steps rather than a copy of them. The caller must still say
+  they are new (ADR 009)
+- **One opening for every entry point.** Voice speaks the greeting, the CLI prints it,
+  and `POST /api/agent/sessions` now returns it. All three wait for a name from the
+  first turn
+- `IDENTITY_FIRST_ALLOW_FAQ`, off by default, answers an opening clinic question before
+  a name is taken
+- `make chat ARGS="--script identity --trace"` walks the whole opening, including a
+  misheard surname and an ambiguous date
+
+**The opening, after a second live call** ✅ *(2026-10-02, ADR 010 amendment)*
+- The greeting asks whether the caller is an existing patient or new. Existing → name
+  spelled back → date of birth read back → verified. New → the same two steps, then a
+  phone number → registered → what the agent can do for them. A request made on the
+  way is still held and acted on
+- **Aura was dropping letters, measured.** Spelled-back letters were synthesised and
+  transcribed back with word timings. Full stops lost letters ("H. A. N. N. A. N" →
+  "h a n") and cut "A" to a 160 ms "uh". Commas helped, but "I, A, N" in Bilzerian still
+  lost its A on a third call, so a pause now goes before every A and any vowel after a
+  vowel: "B, I, L, Z, E, R, I... A, N" — 53 of 54 complete over repeated runs
+- **A phone number read in two pieces is one number.** "One", a pause, then nine digits
+  used to end in an offer of a person. Dictation now waits 3 s after a trailing digit,
+  and a partial number is held ("Mm-hm, go on.") and joined to the next turn
+- **Spelling split at a pause, from the first live call.** The tail of a spelling ("H a
+  n" / "n") is joined on, not swapped in, and a single letter is never a name
+- `make chat ARGS="--script register --trace"` walks the new-patient path
+
 **Phase 15 — Telephony** 🟡 *(built and proven; blocked on Twilio's trial, not on code)*
 - The adapter is finished and verified over the public internet. A tunnel was opened, a
   client that behaves like Twilio connected to the real stream URL, and the agent greeted
@@ -460,8 +523,9 @@ window is more robust and slower), and tuning without measurement is guessing.
 ## Last test results
 
 ```
-1254 passed in 89s   (full suite, both EHR providers, live HAPI)
-1041 passed in 17s   (offline suite: -m "not integration")
+1312 passed in 19s   (offline suite: make test, 2026-10-01)
+1254 passed in 89s   (full suite, both EHR providers, live HAPI -- last run 2026-09-21,
+                      before the identity-first opening; not re-run against HAPI since)
 ```
 
 Try it: `python scripts/text_chat.py --script demo1 --trace`
@@ -469,7 +533,7 @@ Try it: `python scripts/text_chat.py --script demo1 --trace`
 - The HAPI suite runs against a live FHIR 4.0.1 server via `make test-int`; it skips
   automatically when no server is reachable, so the default suite stays offline.
 - 2 warnings = third-party deprecations (starlette/anyio), not project code.
-- `ruff check` clean · `ruff format` clean · `mypy` strict clean across 98 source files.
+- `ruff check` clean · `ruff format` clean · `mypy` strict clean across 104 source files.
 - Dashboard: `eslint` clean · `tsc --noEmit` (strict, `noUncheckedIndexedAccess`) clean ·
   `next build` clean.
 - Zero network calls, zero cost.
@@ -559,6 +623,16 @@ Try it: `python scripts/text_chat.py --script demo1 --trace`
    `list_appointments`, for the dashboard. Nothing in the agent runtime calls them, and a
    caller-facing path that could would defeat verification entirely. That constraint is
    currently a comment on the interface and a code review, not something enforced.
+19. **Spelled letters are checked by machine, not yet by ear for every letter.** Commas
+   were chosen by transcribing Aura's output back (ADR 010 amendment), which proves the
+   letters are there and of plausible length. It does not prove every letter sounds right
+   to a listener; "A" was the one a caller noticed.
+20. **Identity before anything, including the opening hours.** With
+   `IDENTITY_FIRST_ALLOW_FAQ` off (the default), a caller who only wants a clinic fact
+   gives a name and date of birth first. One who is not on file hears the answer only
+   after failing the identity steps, at which point clinic questions are answered again.
+   The switch exists for that case. Whether it should default to on is a product decision,
+   not an engineering one.
 
 ## Next tasks
 
@@ -589,6 +663,7 @@ Try it: `python scripts/text_chat.py --script demo1 --trace`
 | [007](docs/decisions/007-voice-transport.md) | A plain WebSocket for browser audio, not WebRTC |
 | [008](docs/decisions/008-model-understands-rules-decide.md) | The model understands; the rules decide |
 | [009](docs/decisions/009-registering-new-patients.md) | The agent may create a patient record, under three conditions |
+| [010](docs/decisions/010-identity-first-opening.md) | Identity first, name spelled back, date read back |
 
 One deliberate deviation from the original specification: **`create_refill_request` is not
 on the `EHRProvider` interface.** A refill request is a workflow artifact awaiting

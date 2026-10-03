@@ -235,7 +235,10 @@ SessionState
 ```
 
 Per turn: **classify safety → resolve intent → select/continue workflow → execute
-deterministic step(s) → render response**. The LLM contributes intent and entity
+deterministic step(s) → render response**. Until the caller is verified, "select
+workflow" means the identity steps: name spelled back, date of birth read back, then the
+record. A request made on the way is held and routed the moment the caller is verified
+([ADR 010](docs/decisions/010-identity-first-opening.md)). The LLM contributes intent and entity
 extraction; everything else is Python, including every word the caller hears.
 
 Rules run first on every turn and are a complete implementation on their own — the model

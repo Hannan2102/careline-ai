@@ -55,6 +55,17 @@ class StartSessionRequest(BaseModel):
     channel: SessionChannel = SessionChannel.TEXT
 
 
+class StartedSession(SessionSnapshot):
+    """A new session, and the line that opens it.
+
+    The greeting comes back with the session so an HTTP client opens the call
+    exactly as voice and the CLI do -- asking for a name (ADR 010) -- rather
+    than leaving each client to remember what to say first.
+    """
+
+    greeting: str
+
+
 class TurnRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -76,11 +87,13 @@ class SessionDetail(BaseModel):
     traces: list[TurnTrace]
 
 
-@router.post("/sessions", response_model=SessionSnapshot, status_code=201)
+@router.post("/sessions", response_model=StartedSession, status_code=201)
 async def start_session(
     request: StartSessionRequest, runtime: Runtime = Depends(get_runtime)
-) -> SessionSnapshot:
-    return runtime.sessions.create(channel=request.channel).snapshot()
+) -> StartedSession:
+    session = runtime.sessions.create(channel=request.channel)
+    greeting = runtime.orchestrator.greet(session)
+    return StartedSession(**session.snapshot().model_dump(), greeting=greeting)
 
 
 @router.post("/sessions/{session_id}/turns", response_model=TurnResponse)

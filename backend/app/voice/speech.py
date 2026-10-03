@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import re
 
+from app.agents.spelling import WRITTEN_COMMA_RUN, WRITTEN_RUN, spell_for_speech
+
 #: Written form -> spoken form. Matched whole-word, case-sensitively, so a
 #: patient surnamed Drive or a street called Oh is untouched.
 SPOKEN_FORMS: tuple[tuple[str, str], ...] = (
@@ -42,8 +44,14 @@ _COMPILED: tuple[tuple[re.Pattern[str], str], ...] = tuple(
 
 
 def for_speech(text: str) -> str:
-    """The same message, written the way it should be said."""
-    spoken = text
+    """The same message, written the way it should be said.
+
+    A name spelled back is the one place the written form is actively wrong
+    out loud: "J-O-H-N" is a word to a speech engine, and the caller hears
+    "John" -- which is exactly the thing they were being asked to check.
+    """
+    spoken = WRITTEN_COMMA_RUN.sub(lambda m: spell_for_speech(m.group(0)), text)
+    spoken = WRITTEN_RUN.sub(lambda m: spell_for_speech(m.group(0)), spoken)
     for pattern, replacement in _COMPILED:
         spoken = pattern.sub(replacement, spoken)
     return spoken

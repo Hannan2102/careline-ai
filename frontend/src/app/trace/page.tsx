@@ -29,7 +29,7 @@ function TraceView() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold">Agent Trace</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-strong">Agent Trace</h1>
           <p className="mt-1 text-sm text-muted">
             Every field recorded for every turn: what was said, what the safety layer decided,
             what was extracted, which workflow ran, what it did to the record, how long each
@@ -49,7 +49,7 @@ function TraceView() {
                     setChosen(event.target.value);
                     router.replace(`/trace?call=${encodeURIComponent(event.target.value)}`);
                   }}
-                  className="rounded border border-edge bg-panel px-2 py-1 font-mono text-xs text-white"
+                  className="rounded border border-edge bg-panel px-2 py-1 font-mono text-xs text-strong"
                 >
                   {rows.map((call) => (
                     <option key={call.session_id} value={call.session_id}>
