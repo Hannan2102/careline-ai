@@ -66,8 +66,8 @@ services:
         sync: false
       - key: DEEPGRAM_API_KEY
         sync: false
-      # The site's public URL, as a JSON list, for CORS:
-      #   ["https://careline-web.onrender.com"]
+      # The site's public URL, for CORS. Plain or a JSON list:
+      #   https://careline-web.onrender.com
       - key: DASHBOARD_ORIGINS
         sync: false
       # This service's own public URL. Twilio (next phase) dials it.

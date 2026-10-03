@@ -119,3 +119,28 @@ class TestHostedDatabaseUrls:
 
         for given in ("postgresql+asyncpg://u:p@h/db", "sqlite+aiosqlite:///./x.db"):
             assert Settings(_env_file=None, database_url=given).database_url == given
+
+
+class TestDashboardOriginsAsPasted:
+    """The first Render deploy died at startup on a plainly pasted URL."""
+
+    def test_a_plain_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from app.config.settings import Settings
+
+        monkeypatch.setenv("DASHBOARD_ORIGINS", "https://careline-web.onrender.com/")
+        assert Settings(_env_file=None).dashboard_origins == ["https://careline-web.onrender.com"]
+
+    def test_comma_separated(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from app.config.settings import Settings
+
+        monkeypatch.setenv("DASHBOARD_ORIGINS", "https://a.example, https://b.example")
+        assert Settings(_env_file=None).dashboard_origins == [
+            "https://a.example",
+            "https://b.example",
+        ]
+
+    def test_json_still_works(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from app.config.settings import Settings
+
+        monkeypatch.setenv("DASHBOARD_ORIGINS", '["https://a.example"]')
+        assert Settings(_env_file=None).dashboard_origins == ["https://a.example"]

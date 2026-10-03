@@ -7,13 +7,14 @@ combinations detectable at startup rather than at the first request.
 
 from __future__ import annotations
 
+import json
 from decimal import Decimal
 from enum import StrEnum
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class AIMode(StrEnum):
@@ -59,7 +60,26 @@ class Settings(BaseSettings):
     api_port: int = 8000
     #: Browser origins allowed to call this API. The admin dashboard runs on a
     #: different port in development, so it needs to be named explicitly.
-    dashboard_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    #:
+    #: Accepts a JSON list or plain comma-separated URLs. Only JSON used to
+    #: work, and the first Render deploy failed at startup because the URL was
+    #: pasted plainly -- which is what anyone pasting one URL into a dashboard
+    #: will do.
+    dashboard_origins: Annotated[list[str], NoDecode] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+
+    @field_validator("dashboard_origins", mode="before")
+    @classmethod
+    def _origins_as_given(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        text = value.strip()
+        if text.startswith("["):
+            return json.loads(text)
+        # An origin has no trailing slash; a URL copied from a browser does.
+        return [part.strip().rstrip("/") for part in text.split(",") if part.strip()]
 
     # --- Persistence -----------------------------------------------------
     database_url: str = "sqlite+aiosqlite:///./careline.db"

@@ -31,7 +31,7 @@ for them once, when the Blueprint is created, and stores them encrypted on the
    |---|---|---|
    | `GROQ_API_KEY` | api | your Groq key |
    | `DEEPGRAM_API_KEY` | api | your Deepgram key |
-   | `DASHBOARD_ORIGINS` | api | `["https://careline-web.onrender.com"]` |
+   | `DASHBOARD_ORIGINS` | api | `https://careline-web.onrender.com` (comma-separate several) |
    | `PUBLIC_BASE_URL` | api | `https://careline-api.onrender.com` |
    | `NEXT_PUBLIC_API_BASE_URL` | web | `https://careline-api.onrender.com` |
 
