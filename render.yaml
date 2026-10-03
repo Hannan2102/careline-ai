@@ -4,8 +4,10 @@
 #   careline-web  Next.js site: the call page and the staff dashboard.
 #   careline-db   Postgres for calls, turns, audit, escalations, spend.
 #
-# Secrets are `sync: false`: Render asks for them once, when the Blueprint is
-# created, and stores them encrypted. They are never in this file, never in
+# Secrets (the API keys) are `sync: false`: Render asks for them once, when
+# the Blueprint is created, and stores them encrypted. The public URLs below
+# are plain values, so a change to them is a commit rather than a dashboard
+# edit. They are never in this file, never in
 # the repository, and never sent to the browser -- the site only ever knows
 # the API's public URL. See docs/deploy-render.md.
 
@@ -66,14 +68,13 @@ services:
         sync: false
       - key: DEEPGRAM_API_KEY
         sync: false
-      # The site's public URL, for CORS. Plain or a JSON list:
-      #   https://careline-web.onrender.com
+      # The site's public URL, for CORS. Plain or comma-separated.
       - key: DASHBOARD_ORIGINS
-        sync: false
-      # This service's own public URL. Twilio (next phase) dials it.
-      #   https://careline-api.onrender.com
+        value: https://careline-web.onrender.com
+      # This service's own public URL. Twilio (next phase) dials it. Render
+      # added a suffix because "careline-api" was taken.
       - key: PUBLIC_BASE_URL
-        sync: false
+        value: https://careline-api-dk7v.onrender.com
 
   - name: careline-web
     type: web
@@ -86,7 +87,7 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
-      # The API's public URL, baked into the site at build time:
-      #   https://careline-api.onrender.com
+      # The API's public URL, compiled into the site at build time. Not a
+      # secret -- every browser that loads the site reads it.
       - key: NEXT_PUBLIC_API_BASE_URL
-        sync: false
+        value: https://careline-api-dk7v.onrender.com

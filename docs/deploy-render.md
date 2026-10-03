@@ -24,24 +24,19 @@ for them once, when the Blueprint is created, and stores them encrypted on the
 1. Push the branch to GitHub.
 2. In Render, go to **New → Blueprint** and pick the `careline-ai` repository and
    branch. Render reads `render.yaml`.
-3. Render prompts for the `sync: false` values. Service names map to subdomains, so
-   expect these values (adjust if Render adds a suffix to a name that is taken):
-
-   | Key | Service | Value |
-   |---|---|---|
-   | `GROQ_API_KEY` | api | your Groq key |
-   | `DEEPGRAM_API_KEY` | api | your Deepgram key |
-   | `DASHBOARD_ORIGINS` | api | `https://careline-web.onrender.com` (comma-separate several) |
-   | `PUBLIC_BASE_URL` | api | `https://careline-api.onrender.com` |
-   | `NEXT_PUBLIC_API_BASE_URL` | web | `https://careline-api.onrender.com` |
+3. Render prompts for the two secrets, `GROQ_API_KEY` and `DEEPGRAM_API_KEY`.
+   The public URLs are plain values in `render.yaml`: the site is
+   `https://careline-web.onrender.com` and the API
+   `https://careline-api-dk7v.onrender.com` (Render added the suffix because the
+   name was taken). A fresh Blueprint elsewhere will get different URLs; change
+   `DASHBOARD_ORIGINS`, `PUBLIC_BASE_URL` and `NEXT_PUBLIC_API_BASE_URL` to match.
 
 4. Apply. The database comes up first, then the API (which creates its tables on
    start), then the site.
 5. Open `https://careline-web.onrender.com` and press call.
 
-If either URL turns out different from the table, correct it under the service's
-**Environment** tab. `NEXT_PUBLIC_API_BASE_URL` is compiled into the site, so the site
-then needs a **Manual Deploy → Clear build cache & deploy**.
+Changing a URL is a commit to `render.yaml`: the Blueprint syncs the value and the
+site is rebuilt, which matters because `NEXT_PUBLIC_API_BASE_URL` is compiled in.
 
 ## What the free tier means for a demo
 
